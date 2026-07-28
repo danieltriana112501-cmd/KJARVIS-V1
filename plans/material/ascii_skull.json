@@ -1,0 +1,21 @@
+{
+  "_fuente": "Extraído de plans/material/skull-illustration-source.tsx (componente React/Next.js entregado por el usuario). Este JSON es la versión de datos limpia, sin React, lista para portar a Jarvis/assets/app.js en la Fase 09.",
+  "_nota_frames": "El componente original solo tiene 1 frame en FRAMES (no es una secuencia animada real) — es una ilustración ASCII estática de una calavera con un efecto CSS de glitch encima. Fase 09 debe tratarlo como el arte base del estado 'inactivo', y generar variantes para 'escuchando'/'hablando'/'procesando' de forma programática (ver phase-09-ascii-panel.md).",
+  "charset": " .:░▒▓█",
+  "_extraccion_frame": "El string del frame (miles de caracteres) NO se duplicó acá a mano para no arriesgar corromperlo. Extraerlo en runtime/build de la Fase 09 directo desde el .tsx fuente con una función chica: leer plans/material/skull-illustration-source.tsx como texto, regex /const FRAMES = \\[\\s*\"((?:[^\"\\\\]|\\\\.)*)\"/ sobre el archivo, tomar el grupo 1, y aplicar JSON.parse('\"' + grupo1 + '\"') para des-escapar los \\n en saltos de línea reales. Ese resultado es el frame completo listo para meter en el <pre> del panel ASCII.",
+  "estilo": {
+    "fontFamily": "'Fira Code', 'Consolas', 'Courier New', monospace",
+    "fontSizePx": 24,
+    "letterSpacing": -0.14,
+    "lineHeight": 1,
+    "backgroundColor": "transparent",
+    "textColor": "#f5f5f5",
+    "_nota_textColor": "El original traía #000000 (negro) sobre fondo transparente — invisible sobre fondo negro. Corregido a blanco (#f5f5f5) por indicación del usuario."
+  },
+  "efecto_glitch": {
+    "tipo": "aberracion_cromatica_estatica",
+    "css_text_shadow": "2px 0 0 red, -2px 0 0 blue",
+    "_nota": "Única excepción de color de toda la interfaz — confirmado con el usuario. No convertir a blanco/negro, no quitar."
+  },
+  "fuente_original_gif": "https://i.pinimg.com/originals/80/b7/5e/80b75eb774b647c67b2efa531b57ba13.gif"
+}

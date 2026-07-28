@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JARVIS</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="halftone-bg">
+<div class="scanlines"></div>
+
+<div class="app">
+  <aside class="sidebar">
+    <button class="sidebar-icono" id="btnTareas" title="Tareas">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square">
+        <path d="M9 11l3 3L22 4"/>
+        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+      </svg>
+      <span>TAREAS</span>
+    </button>
+    <button class="sidebar-icono" id="btnRecordatorios" title="Recordatorios">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square">
+        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+        <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+      </svg>
+      <span>RECORDATORIOS</span>
+    </button>
+    <button class="sidebar-icono" id="btnConfig" title="Configuración">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
+      <span>CONFIG</span>
+    </button>
+  </aside>
+
+  <main class="main">
+    <header class="header">
+      <h1 class="logo">JARVIS</h1>
+      <div class="header-acciones">
+        <button class="btn-voz" id="btnPip">
+          <span id="btnPipTexto">MOSTRAR MINI</span>
+        </button>
+        <button class="btn-voz" id="btnVoz">
+          <span id="btnVozTexto">ACTIVAR VOZ</span>
+        </button>
+      </div>
+    </header>
+
+    <section class="panel-central">
+      <div class="panel-ascii inactivo" id="panelAscii">
+        <span class="ascii-estado-tag" id="estadoTexto">INACTIVO</span>
+        <div class="ascii-scale-wrap" id="asciiScaleWrap">
+          <pre class="ascii-pre" id="asciiPre"></pre>
+        </div>
+      </div>
+      <div class="caption" id="caption"></div>
+
+      <div class="chat-log" id="chatLog"></div>
+
+      <form class="chat-form" id="chatForm">
+        <input type="text" id="chatInput" placeholder="Escribile a Jarvis..." autocomplete="off">
+        <button type="submit">ENVIAR</button>
+      </form>
+    </section>
+  </main>
+</div>
+
+<!-- Modal Tareas -->
+<div class="overlay hidden" id="overlayTareas">
+  <div class="panel-modal">
+    <div class="panel-cabecera">
+      <h2>TAREAS</h2>
+      <button class="btn-cerrar" data-close="overlayTareas">&times;</button>
+    </div>
+    <div class="tabs">
+      <button class="tab activa" data-tab="crear" data-group="tareas">CREAR</button>
+      <button class="tab" data-tab="lista" data-group="tareas">MIS TAREAS</button>
+    </div>
+    <div class="tab-panel activa" data-panel="crear" data-group="tareas">
+      <form id="formTarea">
+        <label>DESCRIPCIÓN</label>
+        <input type="text" id="tareaDesc" placeholder="¿Qué hay que hacer?" required>
+        <div class="fila">
+          <div class="campo">
+            <label>FECHA</label>
+            <input type="date" id="tareaFecha" required>
+          </div>
+          <div class="campo">
+            <label>HORA (opcional)</label>
+            <input type="time" id="tareaHora">
+          </div>
+        </div>
+        <button type="submit" class="btn-primario">AGREGAR TAREA</button>
+      </form>
+      <p class="msg" id="tareaMsg"></p>
+    </div>
+    <div class="tab-panel" data-panel="lista" data-group="tareas">
+      <div class="lista" id="listaTareas"><p class="msg-vacio">Cargando...</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Recordatorios -->
+<div class="overlay hidden" id="overlayRecordatorios">
+  <div class="panel-modal">
+    <div class="panel-cabecera">
+      <h2>RECORDATORIOS</h2>
+      <button class="btn-cerrar" data-close="overlayRecordatorios">&times;</button>
+    </div>
+    <div class="tabs">
+      <button class="tab activa" data-tab="crear" data-group="rec">NUEVO</button>
+      <button class="tab" data-tab="lista" data-group="rec">MIS RECORDATORIOS</button>
+    </div>
+    <div class="tab-panel activa" data-panel="crear" data-group="rec">
+      <form id="formRecordatorio">
+        <label>TIPO</label>
+        <select id="recTipo">
+          <option value="reminder">RECORDATORIO</option>
+          <option value="alarm">ALARMA</option>
+        </select>
+
+        <label>MENSAJE</label>
+        <input type="text" id="recMensaje" placeholder="¿Qué te aviso?" required>
+
+        <div class="fila">
+          <div class="campo">
+            <label>FECHA</label>
+            <input type="date" id="recFecha" required>
+          </div>
+          <div class="campo">
+            <label>HORA</label>
+            <input type="time" id="recHora" required>
+          </div>
+        </div>
+
+        <label>REPETIR</label>
+        <select id="recRepetir">
+          <option value="none">UNA VEZ</option>
+          <option value="daily">DIARIO</option>
+          <option value="weekly">SEMANAL</option>
+          <option value="weekdays">DÍAS ESPECÍFICOS</option>
+        </select>
+
+        <div class="dias-semana hidden" id="recDiasGrupo">
+          <label class="dia-chip"><input type="checkbox" value="0">LUN</label>
+          <label class="dia-chip"><input type="checkbox" value="1">MAR</label>
+          <label class="dia-chip"><input type="checkbox" value="2">MIÉ</label>
+          <label class="dia-chip"><input type="checkbox" value="3">JUE</label>
+          <label class="dia-chip"><input type="checkbox" value="4">VIE</label>
+          <label class="dia-chip"><input type="checkbox" value="5">SÁB</label>
+          <label class="dia-chip"><input type="checkbox" value="6">DOM</label>
+        </div>
+
+        <label>INSTRUCCIÓN AL SONAR (opcional, para alarmas)</label>
+        <textarea id="recAccion" rows="2" placeholder="Ej: leeme las tareas del día"></textarea>
+
+        <button type="submit" class="btn-primario">CREAR</button>
+      </form>
+      <p class="msg" id="recMsg"></p>
+    </div>
+    <div class="tab-panel" data-panel="lista" data-group="rec">
+      <div class="lista" id="listaRecordatorios"><p class="msg-vacio">Cargando...</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Configuración -->
+<div class="overlay hidden" id="overlayConfig">
+  <div class="panel-modal">
+    <div class="panel-cabecera">
+      <h2>CONFIGURACIÓN</h2>
+      <button class="btn-cerrar" data-close="overlayConfig">&times;</button>
+    </div>
+    <form id="formConfig">
+      <label>API KEY DE GEMINI</label>
+      <div class="fila-input-btn">
+        <input type="password" id="cfgApiKey" autocomplete="off">
+        <button type="button" class="btn-secundario" id="btnMostrarKey">MOSTRAR</button>
+      </div>
+
+      <label>VOZ</label>
+      <select id="cfgVoz"></select>
+
+      <div class="fila">
+        <div class="campo">
+          <label>MICRÓFONO</label>
+          <select id="cfgMic"><option value="-1">Predeterminado</option></select>
+        </div>
+        <div class="campo">
+          <label>ALTAVOZ</label>
+          <select id="cfgSpeaker"><option value="-1">Predeterminado</option></select>
+        </div>
+      </div>
+
+      <label>UBICACIÓN</label>
+      <input type="text" id="cfgLocation" placeholder="Ciudad">
+
+      <label>HORA DE MORNING BRIEF (vacío = desactivado)</label>
+      <input type="time" id="cfgMorningBrief">
+
+      <button type="submit" class="btn-primario">GUARDAR</button>
+    </form>
+    <p class="msg" id="configMsg"></p>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
