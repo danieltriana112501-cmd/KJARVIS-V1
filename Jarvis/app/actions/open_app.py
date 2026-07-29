@@ -241,12 +241,21 @@ def _lookup_app_paths(exe_name: str):
     return None
 
 
-def _scan_start_menu(name: str):
-    """Fuzzy-search Start Menu shortcuts (.lnk) for a matching app name."""
-    needle = (name or "").lower().strip()
-    if not needle:
-        return None
-    candidates = []
+# Caché de proceso: se llena una sola vez con el primer escaneo y se
+# reutiliza para toda la vida del proceso. Se pierde al reiniciar Jarvis
+# (aceptable, ver plans/phase-12-tools-async.md) — instalar una app nueva
+# requiere reiniciar para que _scan_start_menu la vea.
+_START_MENU_CACHE: list | None = None
+
+
+def _load_start_menu_entries() -> list:
+    """Escanea las carpetas de Menú Inicio una sola vez y devuelve la lista
+    cacheada de (stem_lowercase, ruta)."""
+    global _START_MENU_CACHE
+    if _START_MENU_CACHE is not None:
+        return _START_MENU_CACHE
+
+    entries = []
     roots = [
         Path(os.environ.get("APPDATA", "")) / r"Microsoft\Windows\Start Menu\Programs",
         Path(os.environ.get("ProgramData", "")) / r"Microsoft\Windows\Start Menu\Programs",
@@ -256,14 +265,25 @@ def _scan_start_menu(name: str):
             continue
         try:
             for lnk in root.rglob("*.lnk"):
-                stem = lnk.stem.lower()
-                if needle == stem:
-                    return str(lnk)
-                if needle in stem or stem in needle:
-                    score = abs(len(stem) - len(needle))
-                    candidates.append((score, str(lnk)))
+                entries.append((lnk.stem.lower(), str(lnk)))
         except Exception:
             continue
+    _START_MENU_CACHE = entries
+    return entries
+
+
+def _scan_start_menu(name: str):
+    """Fuzzy-search Start Menu shortcuts (.lnk) for a matching app name."""
+    needle = (name or "").lower().strip()
+    if not needle:
+        return None
+    candidates = []
+    for stem, path in _load_start_menu_entries():
+        if needle == stem:
+            return path
+        if needle in stem or stem in needle:
+            score = abs(len(stem) - len(needle))
+            candidates.append((score, path))
     if candidates:
         candidates.sort(key=lambda x: x[0])
         return candidates[0][1]

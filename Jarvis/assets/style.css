@@ -326,6 +326,14 @@ form label {
 }
 form label:first-child { margin-top: 0; }
 
+.campo-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.campo-checkbox input { width: 18px; height: 18px; accent-color: var(--line); }
+
 input[type="text"], input[type="password"], input[type="date"], input[type="time"],
 select, textarea {
   width: 100%;

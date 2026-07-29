@@ -145,6 +145,24 @@ revelaron un supuesto falso sobre una librería/API externa.
   ABSOLUTAMENTE TODO (ni una transcripción, con el mic enviando audio
   normal), tanto con sensibilidad LOW como HIGH. El VAD automático por
   defecto funciona. Ver entrada 2026-07-26 Fase 06 (cuarta entrada).
+- **`config._check()` escribe sobre el `datos/settings.json` REAL, no uno de
+  prueba aislado.** Re-correrlo (incluso solo para confirmar que una clave
+  nueva de `DEFAULTS` no rompió nada) pisa preferencias reales del usuario
+  con los valores de prueba del check (deja `voice` en `"Kore"`). Antes de
+  correr `python -m app.config`, anotar el valor real de los campos que el
+  check toca (`voice`) para poder restaurarlo después, o evitar correrlo
+  sobre el `settings.json` de producción. Ver entrada 2026-07-28 Fase 11.
+- **El campo `behavior` de `types.FunctionDeclaration` (`NON_BLOCKING`) solo
+  lo acepta `BidiGenerateContent` (sesión Live) — `generate_content` normal
+  responde `400 INVALID_ARGUMENT` si lo recibe, aunque el campo exista en el
+  SDK y no tire error al construir el objeto en Python.** Que
+  `types.FunctionDeclaration(..., behavior=...)` no tire excepción al
+  instanciarse NO significa que la API lo acepte en cualquier método — hay
+  que probarlo con una llamada real al método específico que se va a usar,
+  no asumir que "si el SDK lo permite, el server también". Si una
+  declaración de tools se comparte entre un agente sync (`generate_content`)
+  y uno Live, construir dos variantes (una con el campo, otra sin) en vez de
+  una sola compartida. Ver entrada 2026-07-28 Fase 12.
 
 ---
 
@@ -501,6 +519,65 @@ revelaron un supuesto falso sobre una librería/API externa.
   `voice_engine.py` advirtiendo que no se vuelva a agregar sin probarlo.
   El síntoma original de "me corta la frase" queda pendiente de otra
   solución.
+- **Estrategia para no repetirlo:** ver regla en "Reglas aprendidas"
+  arriba.
+
+## [2026-07-28] Fase 11 — re-correr `config._check()` pisó la voz real configurada por el usuario
+
+- **Qué pasó:** al agregar `usar_auriculares` a `DEFAULTS` en `config.py`,
+  se re-corrió `python -m app.config` (siguiendo la regla aprendida de
+  re-validar checks existentes tras tocar un módulo compartido). El check
+  pasó (`OK`), pero como efecto secundario dejó `datos/settings.json` con
+  `"voice": "Kore"` — el propio `_check()` guarda `"Kore"` para probar que
+  `save_settings` acepta una voz válida, y no hay forma de saber cuál era
+  la voz real configurada antes (no hay control de versiones en el repo
+  para diffear `settings.json`).
+- **Causa raíz:** `config._check()` (de la Fase 01) no usa un archivo de
+  datos aislado para pruebas — opera directo sobre
+  `Jarvis/datos/settings.json`, el mismo que usa la app real. Cualquier
+  re-corrida del check en un entorno con datos reales ya cargados sobreescribe
+  esos datos con los valores de prueba del check.
+- **Cómo se detectó:** al leer `settings.json` después de correr el check
+  para confirmar que la fase no rompió nada, apareció `"voice": "Kore"` sin
+  que nadie lo hubiera configurado así en esta sesión.
+- **Solución aplicada:** ninguna en código (fuera del alcance de la Fase 11
+  tocar el diseño de `config._check()`); se documenta acá para que el
+  usuario sepa que su voz preferida puede necesitar reconfigurarse desde el
+  modal si no era "Kore", y para que futuros agentes no vuelvan a pisar
+  datos reales sin querer.
+- **Estrategia para no repetirlo:** ver regla en "Reglas aprendidas" arriba.
+
+## [2026-07-28] Fase 12 — `behavior=NON_BLOCKING` en la declaración compartida rompía el camino de texto con 400
+
+- **Qué pasó:** siguiendo el plan al pie de la letra, se agregó
+  `behavior=types.Behavior.NON_BLOCKING` directo en
+  `_tool_declarations()` (la función compartida entre `GeminiAgent`
+  de texto y `VoiceEngine`, Live). El self-check automatizable nuevo de la
+  fase pasó (construir el objeto no tira error), pero al re-correr
+  `_check_agente.py` (paso 2, escalar a Gemini por texto) tiró
+  `google.genai.errors.ClientError: 400 INVALID_ARGUMENT.
+  {'message': 'FunctionDeclaration.behavior is only supported by the
+  BidiGenerateContent method'}`.
+- **Causa raíz:** el plan asumía explícitamente "Ese camino no lee
+  `behavior` para nada — no cambia su comportamiento síncrono existente"
+  y solo pedía "confirmar esto en la verificación, no darlo por sentado".
+  Al confirmarlo de verdad (correr el self-check de texto existente, no
+  solo construir el objeto en Python), la asunción resultó falsa: el campo
+  no es ignorado por `generate_content`, la API lo rechaza en seco. El
+  SDK no valida esto en el cliente — `types.FunctionDeclaration(...,
+  behavior=...)` se construye sin error, el 400 solo aparece en la llamada
+  de red real.
+- **Cómo se detectó:** corriendo el self-check de texto existente
+  (`_check_agente.py`) después de agregar el campo, tal como pide el punto
+  2 de la Verificación de la fase — no alcanzaba con el self-check nuevo
+  de la fase (que solo construye el `FunctionDeclaration`, no hace una
+  llamada real a `generate_content`).
+- **Solución aplicada:** `_tool_declarations()` ahora toma un parámetro
+  `non_blocking: bool = False`. `GeminiAgent` guarda dos variantes:
+  `_tools_texto` (sin `behavior`, usada por `_resolver_con_gemini`) y
+  `_tools_voz` (con `behavior=NON_BLOCKING` en `buscar_web`/`open_app`,
+  expuesta por la property `tools` que ya consumía `VoiceEngine` sin
+  cambios). `_check_tools_async.py` verifica ambas variantes por separado.
 - **Estrategia para no repetirlo:** ver regla en "Reglas aprendidas"
   arriba.
 

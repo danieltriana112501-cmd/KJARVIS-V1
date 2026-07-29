@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import queue
+import struct
 import threading
 import time
 
@@ -30,22 +31,62 @@ import sounddevice as sd
 from google import genai
 from google.genai import types
 
+# ponytail: audioop es stdlib y alcanza para RMS de PCM16; se remueve en
+# Python 3.13+ (el proyecto corre en 3.12). Si se actualiza el intérprete y
+# esto empieza a fallar, reemplazar por un cálculo manual con `array`.
+import audioop
+
 from app import config
 from app.gemini_agent import GeminiAgent
 
 _SISTEMA = (
     "Sos Jarvis, un asistente de voz personal. Respondé en español, de forma "
-    "breve y directa, con trato cordial hacia quien te habla."
+    "breve y directa, con trato cordial hacia quien te habla. Cuando vayas a "
+    "usar las herramientas buscar_web o open_app, decí antes una frase corta "
+    "(ej. 'dale, un segundo' o 'ya me fijo') en vez de quedarte en silencio "
+    "mientras esperás el resultado."
 )
+
+# Tools NON_BLOCKING (ver gemini_agent.py:_tool_declarations) y el
+# `scheduling` con el que responden cuando terminan: buscar_web puede
+# terminar de decir lo que estaba diciendo antes de reportar (WHEN_IDLE);
+# open_app corta lo que esté diciendo para confirmar ya que se abrió
+# (INTERRUPT). Lo que no está acá (tareas/recordatorios/musica) es BLOCKING.
+_TOOLS_NO_BLOQUEANTES = {
+    "buscar_web": types.FunctionResponseScheduling.WHEN_IDLE,
+    "open_app": types.FunctionResponseScheduling.INTERRUPT,
+}
 
 _SAMPLE_RATE_IN = 16000
 _SAMPLE_RATE_OUT = 24000
 _CHUNK_MS = 30
 
+# Punto de partida sugerido por el plan de Fase 11, NO calibrado escuchando
+# de verdad todavía — si el barge-in dispara solo (se escucha a sí mismo),
+# subir este valor; si no dispara con voz normal fuerte, bajarlo.
+_UMBRAL_RMS_ECO = 500
+
+
+def _rms_pcm16(chunk: bytes) -> float:
+    if not chunk:
+        return 0.0
+    return audioop.rms(chunk, 2)
+
+
+def _en_ventana_de_eco(cola_salida: "queue.Queue | None", ultimo_audio_ts: float,
+                        ventana_s: float, ahora: float) -> bool:
+    if cola_salida is not None and not cola_salida.empty():
+        return True
+    return (ahora - ultimo_audio_ts) < ventana_s
+
 
 class VoiceEngine:
     MODEL = "gemini-2.5-flash-native-audio-latest"
     _UMBRAL_HABLANDO_S = 0.6
+    # Ventana propia del gate de eco de `_enviar_audio`, separada a propósito
+    # de `_UMBRAL_HABLANDO_S` (que es del estado de UI, Fase 09) — la Fase 11
+    # pide que el mute del mic no dependa de `hablando` directamente.
+    _VENTANA_MUTEO_S = 0.6
 
     def __init__(self, api_key: str, voice: str, agente: GeminiAgent):
         self._client = genai.Client(api_key=api_key)
@@ -61,6 +102,10 @@ class VoiceEngine:
         self._buf_jarvis = ""
         self.transcripciones: list[dict] = []  # [{"quien": "usuario"|"jarvis", "texto": ...}]
         self._cola_salida: queue.Queue | None = None
+        # Referencias a las tasks de tools NON_BLOCKING en vuelo: sin esto el
+        # garbage collector puede recolectar una task "fire and forget" a
+        # mitad de camino (error clásico de asyncio, ver plans/ERRORES.md).
+        self._tools_pendientes: list[asyncio.Task] = []
 
     @property
     def activo(self) -> bool:
@@ -70,13 +115,19 @@ class VoiceEngine:
     def hablando(self) -> bool:
         """True mientras queda audio de Jarvis por reproducir (o terminó de
         sonar hace menos de _UMBRAL_HABLANDO_S) — usado por `/api/estado`
-        (Fase 09) para distinguir "escuchando" de "hablando", y por
-        `_enviar_audio` para silenciar el mic y evitar el eco."""
+        (Fase 09) para distinguir "escuchando" de "hablando". Desde la Fase
+        11, `_enviar_audio` usa su propio criterio (`_ventana_de_eco_activa`)
+        en vez de este, para no atar el gate de eco al timer de la UI."""
         if not self._activo:
             return False
         if self._cola_salida is not None and not self._cola_salida.empty():
             return True
         return (time.monotonic() - self._ultimo_audio_ts) < self._UMBRAL_HABLANDO_S
+
+    def _ventana_de_eco_activa(self) -> bool:
+        return _en_ventana_de_eco(
+            self._cola_salida, self._ultimo_audio_ts, self._VENTANA_MUTEO_S, time.monotonic()
+        )
 
     @property
     def procesando(self) -> bool:
@@ -156,6 +207,9 @@ class VoiceEngine:
 
         mic_idx = config.get("mic_device_index", -1)
         speaker_idx = config.get("speaker_device_index", -1)
+        # Leído una sola vez al conectar, mismo patrón que mic/speaker arriba:
+        # cambiar el checkbox en caliente requiere reiniciar la sesión de voz.
+        usar_auriculares = bool(config.get("usar_auriculares", False))
 
         async with self._client.aio.live.connect(model=self.MODEL, config=live_config) as session:
             print(f"[VoiceEngine][{time.strftime('%H:%M:%S')}] sesion conectada, modelo={self.MODEL}")
@@ -192,7 +246,7 @@ class VoiceEngine:
             )
             hilo_out.start()
 
-            enviar_task = asyncio.create_task(self._enviar_audio(session, cola_in))
+            enviar_task = asyncio.create_task(self._enviar_audio(session, cola_in, usar_auriculares))
             recibir_task = asyncio.create_task(self._recibir(session, loop))
             try:
                 while not self._detener_flag.is_set():
@@ -211,11 +265,14 @@ class VoiceEngine:
             finally:
                 enviar_task.cancel()
                 recibir_task.cancel()
-                for t in (enviar_task, recibir_task):
+                for t in list(self._tools_pendientes):
+                    t.cancel()
+                for t in (enviar_task, recibir_task, *self._tools_pendientes):
                     try:
                         await t
                     except (asyncio.CancelledError, Exception):
                         pass
+                self._tools_pendientes.clear()
                 fin_reproductor.set()
                 self._cola_salida = None
                 hilo_out.join(timeout=2)
@@ -238,7 +295,7 @@ class VoiceEngine:
             except Exception as e:
                 print(f"[VoiceEngine][{time.strftime('%H:%M:%S')}] error reproduciendo audio: {e!r}")
 
-    async def _enviar_audio(self, session, cola_in: "asyncio.Queue[bytes]") -> None:
+    async def _enviar_audio(self, session, cola_in: "asyncio.Queue[bytes]", usar_auriculares: bool) -> None:
         # DEBUG temporal: confirma que el mic realmente está mandando audio
         # (si esto no aparece cada ~1.5s, el problema es el dispositivo de
         # entrada, no la API). Quitar una vez diagnosticado el reporte del
@@ -249,20 +306,21 @@ class VoiceEngine:
             n += 1
             if n % 50 == 0:
                 print(f"[VoiceEngine][{time.strftime('%H:%M:%S')}] mic activo, {n} chunks enviados")
-            # ponytail: sin cancelación de eco real, el parlante+mic en el
-            # mismo dispositivo hacen que Jarvis "se escuche a sí mismo" y el
-            # servidor lo interpreta como el usuario interrumpiendo. Mientras
-            # Jarvis habla, se manda SILENCIO (mismos bytes, en cero) en vez
-            # de saltear el envío del todo — cortar el streaming por completo
-            # (probado, ver plans/ERRORES.md) dejaba al detector de voz del
-            # servidor en un estado roto: después de la primera respuesta,
-            # ninguna transcripción nueva llegaba nunca más en esa sesión.
-            # Mandar silencio mantiene el streaming continuo que la API
-            # espera, sin el eco. Con auriculares no haría falta ninguno de
-            # los dos; si se agrega selector de auriculares en config,
-            # condicionar esto a "sin auriculares".
-            if self.hablando:
-                chunk = b"\x00" * len(chunk)
+            # Sin cancelación de eco real, el parlante+mic en el mismo
+            # dispositivo hacen que Jarvis "se escuche a sí mismo". Se sigue
+            # mandando SILENCIO (mismos bytes, en cero) en vez de saltear el
+            # envío del todo — cortar el streaming por completo (probado, ver
+            # plans/ERRORES.md) rompe el detector de voz del servidor para el
+            # resto de la sesión. La diferencia con antes: el mute ya no es
+            # binario por `hablando` — con auriculares no hay eco posible
+            # (nunca mutea) y sin auriculares un RMS alto (usuario gritando
+            # encima del eco) deja pasar el audio real para permitir barge-in.
+            if not usar_auriculares and self._ventana_de_eco_activa():
+                rms = _rms_pcm16(chunk)
+                if rms > _UMBRAL_RMS_ECO:
+                    print(f"[VoiceEngine][{time.strftime('%H:%M:%S')}] barge-in detectado, RMS={rms:.0f}")
+                else:
+                    chunk = b"\x00" * len(chunk)
             await session.send_realtime_input(
                 audio=types.Blob(data=chunk, mime_type=f"audio/pcm;rate={_SAMPLE_RATE_IN}")
             )
@@ -327,19 +385,53 @@ class VoiceEngine:
                     self._cola_salida.put(msg.data)
 
             if msg.tool_call:
+                bloqueantes = []
                 for fc in msg.tool_call.function_calls:
                     print(f"[VoiceEngine][{ts}] tool_call: {fc.name}({dict(fc.args or {})})")
-                t0 = time.monotonic()
-                respuestas = []
-                for fc in msg.tool_call.function_calls:
-                    resultado = await loop.run_in_executor(
-                        None, self.agente.ejecutar_tool_directa, fc.name, dict(fc.args or {}),
-                    )
-                    respuestas.append(types.FunctionResponse(
-                        id=fc.id, name=fc.name, response={"result": resultado},
-                    ))
-                print(f"[VoiceEngine][{time.strftime('%H:%M:%S')}] tool_call resuelto en {time.monotonic()-t0:.2f}s")
-                await session.send_tool_response(function_responses=respuestas)
+                    if fc.name in _TOOLS_NO_BLOQUEANTES:
+                        self._lanzar_tool_no_bloqueante(session, loop, fc)
+                    else:
+                        bloqueantes.append(fc)
+
+                if bloqueantes:
+                    t0 = time.monotonic()
+                    respuestas = []
+                    for fc in bloqueantes:
+                        resultado = await loop.run_in_executor(
+                            None, self.agente.ejecutar_tool_directa, fc.name, dict(fc.args or {}),
+                        )
+                        respuestas.append(types.FunctionResponse(
+                            id=fc.id, name=fc.name, response={"result": resultado},
+                        ))
+                    print(f"[VoiceEngine][{time.strftime('%H:%M:%S')}] tool_call resuelto en {time.monotonic()-t0:.2f}s")
+                    await session.send_tool_response(function_responses=respuestas)
+
+    def _lanzar_tool_no_bloqueante(self, session, loop: asyncio.AbstractEventLoop, fc) -> None:
+        """Dispara una tool NON_BLOCKING sin esperarla en línea — la task
+        arma y manda su propia FunctionResponse al terminar, de forma
+        independiente del resto de `_recibir_turno`."""
+        task = asyncio.create_task(self._resolver_tool_no_bloqueante(session, loop, fc))
+        self._tools_pendientes.append(task)
+        task.add_done_callback(self._al_terminar_tool_no_bloqueante)
+
+    def _al_terminar_tool_no_bloqueante(self, task: asyncio.Task) -> None:
+        if task in self._tools_pendientes:
+            self._tools_pendientes.remove(task)
+        if not task.cancelled() and task.exception():
+            print(f"[VoiceEngine][{time.strftime('%H:%M:%S')}] tool NON_BLOCKING falló: {task.exception()!r}")
+
+    async def _resolver_tool_no_bloqueante(self, session, loop: asyncio.AbstractEventLoop, fc) -> None:
+        t0 = time.monotonic()
+        resultado = await loop.run_in_executor(
+            None, self.agente.ejecutar_tool_directa, fc.name, dict(fc.args or {}),
+        )
+        respuesta = types.FunctionResponse(
+            id=fc.id, name=fc.name, response={"result": resultado},
+            scheduling=_TOOLS_NO_BLOQUEANTES[fc.name],
+        )
+        print(f"[VoiceEngine][{time.strftime('%H:%M:%S')}] tool_call NON_BLOCKING '{fc.name}' "
+              f"resuelto en {time.monotonic()-t0:.2f}s")
+        await session.send_tool_response(function_responses=[respuesta])
 
     def _vaciar_cola_salida(self) -> None:
         cola = self._cola_salida
@@ -350,3 +442,29 @@ class VoiceEngine:
                 cola.get_nowait()
         except queue.Empty:
             pass
+
+
+def _check() -> None:
+    """Self-check automático (sin red, sin mic real) del gate de eco de la
+    Fase 11: `_rms_pcm16` y `_en_ventana_de_eco` son funciones puras. El
+    barge-in de punta a punta con la Live API real queda para
+    `_check_voz.py` (requiere un humano hablando)."""
+    silencio = b"\x00\x00" * 800
+    fuerte = struct.pack("<800h", *([20000, -20000] * 400))
+    assert _rms_pcm16(b"") == 0.0, "chunk vacío debería dar RMS 0"
+    assert _rms_pcm16(silencio) < 10, "RMS de silencio debería ser ~0"
+    assert _rms_pcm16(fuerte) > _UMBRAL_RMS_ECO, "RMS de audio fuerte debería superar el umbral"
+
+    cola_vacia = queue.Queue()
+    cola_con_datos = queue.Queue()
+    cola_con_datos.put(b"x")
+    ahora = 100.0
+    assert _en_ventana_de_eco(cola_con_datos, 0.0, 0.6, ahora) is True, "cola con audio pendiente = ventana activa"
+    assert _en_ventana_de_eco(cola_vacia, ahora - 0.1, 0.6, ahora) is True, "recién terminó de sonar = ventana activa"
+    assert _en_ventana_de_eco(cola_vacia, ahora - 5.0, 0.6, ahora) is False, "hace rato que no suena = sin ventana"
+
+    print("OK")
+
+
+if __name__ == "__main__":
+    _check()

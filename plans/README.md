@@ -72,6 +72,12 @@ Módulos de ahí que NO se copian nunca (riesgo de seguridad, fuera de alcance):
 | 08 | `phase-08-interfaz-base.md` | Interfaz pywebview + Flask, estilo Watch Dogs 2, sidebar + modales | 01–05 |
 | 09 | `phase-09-ascii-panel.md` | Panel central con animación ASCII reactiva al estado de voz | 06, 08 |
 | 10 | `phase-10-pip-overlay.md` | Ventana flotante mini (picture-in-picture) siempre encima | 09 |
+| 11 | `phase-11-fluidez-voz.md` | Matar la mordida de 600ms post-respuesta y devolver el barge-in (flag auriculares + gate de energía) | 01, 06 |
+| 12 | `phase-12-tools-async.md` | `buscar_web`/`open_app` como `NON_BLOCKING` + `scheduling`, frases de relleno, caché del Menú Inicio | 05, 06 |
+
+Fases 13+ (VAD, prompt, personaje/overlay) aún no tienen archivo propio —
+su orden y contenido detallado están en
+`plans/INVESTIGACION-2026-07-27-voz-tools-ui.md`, secciones 9, 12 y 13.10.
 
 ## Estado
 
@@ -88,3 +94,5 @@ actualizarse a sí misma si aplica):
 - [x] Fase 08
 - [x] Fase 09
 - [ ] Fase 10
+- [x] Fase 11
+- [x] Fase 12

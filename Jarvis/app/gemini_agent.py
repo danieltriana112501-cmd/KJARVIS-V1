@@ -94,7 +94,16 @@ _DISPATCH = {
 _MAX_TURNOS_FUNCTION_CALLING = 5
 
 
-def _tool_declarations() -> types.Tool:
+def _tool_declarations(non_blocking: bool = False) -> types.Tool:
+    """`non_blocking=True` agrega `behavior=NON_BLOCKING` a `buscar_web` y
+    `open_app`, para la sesión Live (`BidiGenerateContent`) de
+    `VoiceEngine`. El agente de texto (`generate_content` normal) usa el
+    default `False`: la API responde `400 INVALID_ARGUMENT
+    ("FunctionDeclaration.behavior is only supported by the
+    BidiGenerateContent method")` si el campo va en esa request —
+    confirmado empíricamente (Fase 12), contra lo que asumía el plan
+    original. Ver `plans/ERRORES.md`."""
+    behavior = {"behavior": types.Behavior.NON_BLOCKING} if non_blocking else {}
     return types.Tool(function_declarations=[
         types.FunctionDeclaration(
             name="tareas",
@@ -110,6 +119,7 @@ def _tool_declarations() -> types.Tool:
             name="open_app",
             description="Abre una aplicación de escritorio por su nombre (ej. calculadora, chrome, spotify).",
             parameters_json_schema=_OPEN_APP_SCHEMA,
+            **behavior,
         ),
         types.FunctionDeclaration(
             name="musica",
@@ -123,6 +133,7 @@ def _tool_declarations() -> types.Tool:
                         "recientes, recomendaciones) y devuelve un resumen de lo encontrado. Usar siempre "
                         "que la respuesta dependa de información que pueda haber cambiado recientemente.",
             parameters_json_schema=_BUSCAR_WEB_SCHEMA,
+            **behavior,
         ),
     ])
 
@@ -136,7 +147,8 @@ class GeminiAgent:
     def __init__(self, api_key: str, model: str = "gemini-flash-latest"):
         self.client = genai.Client(api_key=api_key)
         self.model = model
-        self._tools = _tool_declarations()
+        self._tools_texto = _tool_declarations()
+        self._tools_voz = _tool_declarations(non_blocking=True)
         self._stats = {"local": 0, "gemini": 0}
 
     def stats(self) -> dict:
@@ -144,9 +156,12 @@ class GeminiAgent:
 
     @property
     def tools(self) -> types.Tool:
-        """Declaraciones de tools, reutilizadas por `VoiceEngine` (Live API)
-        para no duplicar el schema de function-calling."""
-        return self._tools
+        """Declaraciones de tools para la sesión Live, reutilizadas por
+        `VoiceEngine` para no duplicar el schema de function-calling —
+        incluye `behavior=NON_BLOCKING` en `buscar_web`/`open_app` (Fase
+        12). El agente de texto usa `_tools_texto` (sin ese campo) para su
+        propia request, ver `_tool_declarations`."""
+        return self._tools_voz
 
     def ejecutar_tool_directa(self, nombre: str, parametros: dict, player=None) -> str:
         """Ejecuta una tool ya decidida por otro motor de function-calling
@@ -169,7 +184,7 @@ class GeminiAgent:
 
     def _resolver_con_gemini(self, texto: str, player=None) -> str:
         contents = [types.Content(role="user", parts=[types.Part(text=texto)])]
-        config = types.GenerateContentConfig(tools=[self._tools])
+        config = types.GenerateContentConfig(tools=[self._tools_texto])
 
         for _ in range(_MAX_TURNOS_FUNCTION_CALLING):
             response = self.client.models.generate_content(

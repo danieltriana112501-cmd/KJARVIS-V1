@@ -21,6 +21,7 @@ DEFAULTS = {
     "location": "",
     "morning_brief_time": "",
     "pip_habilitado": False,
+    "usar_auriculares": False,
 }
 
 VOCES_DISPONIBLES = [

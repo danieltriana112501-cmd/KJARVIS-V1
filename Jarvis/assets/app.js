@@ -163,6 +163,7 @@ $("#formRecordatorio").addEventListener("submit", async (e) => {
 async function cargarConfig() {
   const cfg = await api("/api/config");
   $("#cfgApiKey").value = cfg.gemini_api_key || "";
+  $("#cfgAuriculares").checked = !!cfg.usar_auriculares;
   $("#cfgLocation").value = cfg.location || "";
   $("#cfgMorningBrief").value = cfg.morning_brief_time || "";
 
@@ -226,6 +227,7 @@ $("#formConfig").addEventListener("submit", async (e) => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       gemini_api_key: $("#cfgApiKey").value,
+      usar_auriculares: $("#cfgAuriculares").checked,
       voice: $("#cfgVoz").value,
       mic_device_index: Number($("#cfgMic").value),
       speaker_device_index: Number($("#cfgSpeaker").value),
