@@ -22,6 +22,12 @@ DEFAULTS = {
     "morning_brief_time": "",
     "pip_habilitado": False,
     "usar_auriculares": False,
+    # Filtro cavernoso (eco corto + apagado de agudos) sobre el audio de
+    # salida de la Live API. La API no permite pitch-shift real (cambiaría
+    # duración y desincronizaría la cola de reproducción, ver audio_fx.py),
+    # así que esto es lo más "de ultratumba" que se puede sumar sin tocar
+    # el pipeline en tiempo real. Default apagado por si mete artefactos.
+    "voz_ultratumba": False,
     # Carpeta de perfil de Chrome (NO el nombre visible, la carpeta real —
     # confirmar con chrome://version o Local State). Vacío = comportamiento
     # anterior (webbrowser.open, sujeto al selector de perfiles). Ver

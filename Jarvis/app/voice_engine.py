@@ -36,7 +36,7 @@ from google.genai import types
 # esto empieza a fallar, reemplazar por un cálculo manual con `array`.
 import audioop
 
-from app import config, persona
+from app import audio_fx, config, persona
 from app.gemini_agent import GeminiAgent
 
 # Identidad compartida con el agente de texto (Fase 18, ver persona.py) +
@@ -231,6 +231,10 @@ class VoiceEngine:
         # Leído una sola vez al conectar, mismo patrón que mic/speaker arriba:
         # cambiar el checkbox en caliente requiere reiniciar la sesión de voz.
         usar_auriculares = bool(config.get("usar_auriculares", False))
+        efecto_ultratumba = (
+            audio_fx.FiltroUltratumba(_SAMPLE_RATE_OUT)
+            if config.get("voz_ultratumba", False) else None
+        )
 
         async with self._client.aio.live.connect(model=self.MODEL, config=live_config) as session:
             print(f"[VoiceEngine][{time.strftime('%H:%M:%S')}] sesion conectada, modelo={self.MODEL}")
@@ -262,7 +266,7 @@ class VoiceEngine:
             fin_reproductor = threading.Event()
             hilo_out = threading.Thread(
                 target=self._reproducir_loop,
-                args=(stream_out, self._cola_salida, fin_reproductor),
+                args=(stream_out, self._cola_salida, fin_reproductor, efecto_ultratumba),
                 daemon=True,
             )
             hilo_out.start()
@@ -302,7 +306,7 @@ class VoiceEngine:
                 stream_out.stop()
                 stream_out.close()
 
-    def _reproducir_loop(self, stream_out, cola: "queue.Queue", fin: threading.Event) -> None:
+    def _reproducir_loop(self, stream_out, cola: "queue.Queue", fin: threading.Event, efecto=None) -> None:
         while not fin.is_set():
             try:
                 datos = cola.get(timeout=0.2)
@@ -311,6 +315,8 @@ class VoiceEngine:
             if datos is None:
                 continue
             try:
+                if efecto is not None:
+                    datos = efecto.procesar(datos)
                 stream_out.write(datos)
                 self._ultimo_audio_ts = time.monotonic()
             except Exception as e:
