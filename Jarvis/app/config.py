@@ -22,6 +22,11 @@ DEFAULTS = {
     "morning_brief_time": "",
     "pip_habilitado": False,
     "usar_auriculares": False,
+    # Carpeta de perfil de Chrome (NO el nombre visible, la carpeta real —
+    # confirmar con chrome://version o Local State). Vacío = comportamiento
+    # anterior (webbrowser.open, sujeto al selector de perfiles). Ver
+    # app/actions/navegador.py y plans/INVESTIGACION..., sección 4.2.
+    "chrome_profile_dir": "",
 }
 
 VOCES_DISPONIBLES = [

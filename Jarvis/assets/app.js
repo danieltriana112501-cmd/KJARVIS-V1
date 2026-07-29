@@ -21,6 +21,9 @@ function abrirModal(id) {
 }
 function cerrarModal(id) {
   $(id).classList.add("hidden");
+  // El test de mic abre un stream de audio real en el backend: si se cierra
+  // el modal sin apretar "Detener" antes, no debe quedar huérfano corriendo.
+  if (id === "#overlayConfig" && micTestActivo) detenerMicTest();
 }
 
 $all(".btn-cerrar").forEach((btn) => {
@@ -28,7 +31,7 @@ $all(".btn-cerrar").forEach((btn) => {
 });
 $all(".overlay").forEach((overlay) => {
   overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) overlay.classList.add("hidden");
+    if (e.target === overlay) cerrarModal("#" + overlay.id);
   });
 });
 
@@ -236,6 +239,82 @@ $("#formConfig").addEventListener("submit", async (e) => {
     }),
   });
   $("#configMsg").textContent = "Configuración guardada.";
+});
+
+// ---------------- Test de micrófono (Fase 13) ----------------
+
+let micTestActivo = false;
+let micTestPollTimer = null;
+
+async function pollMicTestNivel() {
+  try {
+    const data = await api("/api/mic-test/nivel");
+    if (!data.activo) {
+      // El backend lo paró por su cuenta (ej. error del stream) — reflejarlo.
+      await detenerMicTest(false);
+      return;
+    }
+    $("#micTestNivel").style.width = Math.min(100, data.nivel) + "%";
+    const conSenal = data.nivel >= data.umbral;
+    $("#micTestMsg").textContent = conSenal ? "Te escucho" : "Sin señal";
+    $("#micTestMsg").classList.toggle("con-senal", conSenal);
+  } catch (e) {
+    // ponytail: mismo criterio que el resto de los pollings, se reintenta solo.
+  }
+}
+
+async function detenerMicTest(avisarBackend = true) {
+  clearInterval(micTestPollTimer);
+  micTestPollTimer = null;
+  micTestActivo = false;
+  $("#btnMicTest").textContent = "PROBAR";
+  $("#btnMicTest").classList.remove("activo");
+  $("#micTestNivel").style.width = "0%";
+  $("#micTestMsg").textContent = "Sin señal";
+  $("#micTestMsg").classList.remove("con-senal");
+  if (avisarBackend) {
+    await api("/api/mic-test/detener", { method: "POST" });
+  }
+}
+
+$("#btnMicTest").addEventListener("click", async () => {
+  if (micTestActivo) {
+    await detenerMicTest();
+    return;
+  }
+  const resp = await api("/api/mic-test/iniciar", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mic_device_index: Number($("#cfgMic").value) }),
+  });
+  if (!resp.activo) {
+    $("#micTestMsg").textContent = resp.error || "No se pudo iniciar la prueba del micrófono.";
+    return;
+  }
+  micTestActivo = true;
+  $("#btnMicTest").textContent = "DETENER";
+  $("#btnMicTest").classList.add("activo");
+  micTestPollTimer = setInterval(pollMicTestNivel, 150);
+});
+
+// ---------------- Test de salida (Fase 17) ----------------
+// Sin polling ni estado: un disparo único que bloquea hasta que termina de
+// sonar (menos de 1s), no un stream continuo como el de mic.
+
+$("#btnSpeakerTest").addEventListener("click", async () => {
+  $("#speakerTestMsg").textContent = "Sonando...";
+  $("#speakerTestMsg").classList.remove("con-senal");
+  const resp = await api("/api/speaker-test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ speaker_device_index: Number($("#cfgSpeaker").value) }),
+  });
+  if (!resp.ok) {
+    $("#speakerTestMsg").textContent = resp.error || "No se pudo reproducir el tono.";
+    return;
+  }
+  $("#speakerTestMsg").textContent = "¿Escuchaste el tono?";
+  $("#speakerTestMsg").classList.add("con-senal");
 });
 
 // ---------------- Chat de texto ----------------

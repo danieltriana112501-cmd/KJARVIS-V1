@@ -163,6 +163,36 @@ revelaron un supuesto falso sobre una librería/API externa.
   declaración de tools se comparte entre un agente sync (`generate_content`)
   y uno Live, construir dos variantes (una con el campo, otra sin) en vez de
   una sola compartida. Ver entrada 2026-07-28 Fase 12.
+- **Cualquier escala/umbral calculado sobre RMS de audio debe ser
+  logarítmico (dBFS), no lineal, salvo razón concreta en contra — y
+  confirmarse con hardware y voz real, no solo con audio sintético en el
+  self-check.** RMS crudo de voz real por un mic normal se queda lejos del
+  techo físico de int16 (32767); una escala lineal ingenua deja casi todo
+  el rango dinámico de una voz normal pegado cerca de 0. Ver entrada
+  2026-07-28 Fase 13.
+- **`scheduling=INTERRUPT` en una tool `NON_BLOCKING` solo tiene sentido si
+  esa tool tarda perceptiblemente — si resuelve rápido (por caché o
+  porque siempre fue rápida), corta la frase de relleno/actual casi
+  siempre y se percibe (y se loguea) como una interrupción del usuario
+  que nunca pasó.** Default a `WHEN_IDLE` salvo que se mida que la tool
+  realmente tarda. Y ante un síntoma de voz ambiguo ("se corta sola", "me
+  interrumpe sin razón"), pedir el log real de consola de esa sesión
+  ANTES de sospechar del VAD del servidor — puede ser esto. Ver entrada
+  2026-07-28 Fase 14.
+- **Si una sesión de voz no reacciona a NADA (ni una transcripción, ni un
+  error en `server_content`), sospechar primero del par
+  `mic_device_index`/`speaker_device_index`, no del VAD ni del prompt.**
+  PortAudio puede fallar en silencio de cara a la API de Google (el error
+  real solo sale por `print()` en la consola del proceso, nunca llega al
+  servidor ni a la UI) — y un dispositivo puede "andar" en el panel de
+  nivel (Fase 13) o en un test de mic suelto y aun así fallar al abrir un
+  stream a la tasa FIJA que usa la Live API (16kHz/24kHz). WASAPI en
+  particular puede rechazar esa tasa fija (`PaErrorCode -9997`) donde
+  MME/DirectSound la resamplean solos. Antes de guardar un dispositivo en
+  `settings.json`, probarlo aislado con `sd.RawInputStream`/
+  `RawOutputStream` a la tasa exacta. Pedir SIEMPRE el log de una sesión
+  recién arrancada (no reciclada) — el error de PortAudio vive ahí. Ver
+  entrada 2026-07-28 "Sesión de voz completamente muda".
 
 ---
 
@@ -609,3 +639,158 @@ revelaron un supuesto falso sobre una librería/API externa.
   guardados se resetearon a `-1` (predeterminado del sistema).
 - **Estrategia para no repetirlo:** ver regla en "Reglas aprendidas"
   arriba.
+
+## [2026-07-28] Fase 13 — barra del test de micrófono casi no se movía ni gritando: escala lineal contra un techo irreal
+
+- **Qué pasó:** el usuario probó el panel de la Fase 13 con hardware real
+  y confirmó que la barra apenas se movía incluso gritando cerca del mic.
+- **Causa raíz:** `_normalizar_nivel` (`server.py`) usaba una escala
+  lineal (`rms / 300`, tope en 100 a partir de RMS crudo ≈30000) copiada
+  sin calibrar contra hardware real — el propio comentario del código lo
+  admitía ("sin calibrar todavía"). RMS de voz real a volumen normal-a-
+  fuerte se queda en el orden de cientos/pocos miles, lejísimos de 30000
+  (que es casi el techo físico de un int16, 32767). El self-check de la
+  fase pasaba porque probaba con audio sintético fabricado a amplitud
+  ±20000, no representativo de una señal de voz real por un mic.
+- **Cómo se detectó:** el usuario probó con hardware real y voz real, no
+  con el self-check automatizado (que no puede simular esto de forma
+  realista sin grabaciones reales).
+- **Solución aplicada:** escala logarítmica (dBFS) en vez de lineal, con
+  piso en -60dBFS (silencio) a 0dBFS (clipping) — así es como funciona un
+  medidor de nivel de audio real. Mismo cambio de raíz: la aserción del
+  self-check que esperaba `nivel == 100.0` exacto con audio sintético al
+  tope se cambió a `> 99.9` (int16 real nunca pega el full-scale
+  matemático de 32768, el máximo representable es 32767).
+- **Estrategia para no repetirlo:** ver regla nueva en "Reglas aprendidas"
+  arriba — cualquier escala/umbral sobre RMS de audio necesita, además del
+  self-check con datos sintéticos, una confirmación con hardware y voz
+  real antes de darse por calibrado, y debería ser logarítmica por
+  default, no lineal, salvo razón concreta en contra.
+
+## [2026-07-28] Fase 14 — `open_app` con `scheduling=INTERRUPT` se autointerrumpía a mitad de la frase de relleno
+
+- **Qué pasó:** el usuario reportó, probando voz real con auriculares
+  puestos (descartando eco/gate de RMS como causa), que Jarvis daba
+  "respuestas cortadas" y a veces "volvía a responder" como si lo hubiera
+  interrumpido sin haber dicho nada. Se sospechaba inicialmente del VAD
+  del servidor (por eso la Fase 14 agregó `prefix_padding_ms` en
+  aislado) — esa parte funcionó bien (el servidor no se quedó mudo, a
+  diferencia del desastre de Fase 06), pero no explicaba el síntoma.
+- **Causa raíz, encontrada leyendo el log real de la sesión:** dos bugs
+  compuestos, ambos de la Fase 12.
+  1. `gemini_agent.py`/`open_app.py` (`_OPEN_APP_SCHEMA`) espera el
+     parámetro `app_name`, pero el modelo mandó `open_app({'name':
+     'word'})` — clave distinta. `open_app()` no tenía fallback, así que
+     leía `app_name=""` y fallaba siempre que el modelo usara `name`.
+  2. `open_app` estaba declarado `scheduling=INTERRUPT` (Fase 12,
+     pensado para un escaneo lento del Menú Inicio). Con la caché de la
+     misma Fase 12, la tool resuelve casi instantáneo (0.00s en el log
+     real) — y `INTERRUPT` corta lo que Jarvis esté diciendo para
+     reportar YA. Resultado: Jarvis empezaba a decir la frase de relleno
+     ("dale, un segundo...") y el propio resultado de la tool, llegando
+     casi de inmediato, la cortaba a mitad de camino — el código logueaba
+     esto como `interrumpido por el usuario`, pero el usuario no había
+     dicho nada. Autointerrupción, no barge-in real.
+- **Cómo se detectó:** pegando el log completo de una sesión de voz real
+  y leyendo la secuencia exacta de eventos (`tool_call` → `resuelto en
+  0.00s` → `interrupted` → `turn_complete`, todo en el mismo segundo) —
+  no se hubiera visto con ningún self-check automatizado, hacía falta el
+  log de una sesión real con la Live API.
+- **Solución aplicada:** `open_app()` ahora acepta `name` como fallback de
+  `app_name`. `open_app` pasó de `scheduling=INTERRUPT` a `WHEN_IDLE` en
+  `_TOOLS_NO_BLOQUEANTES` (`voice_engine.py`) — con resolución casi
+  instantánea, `WHEN_IDLE` reporta el resultado igual de rápido en la
+  práctica pero sin cortar la frase en curso.
+- **Estrategia para no repetirlo:** ver regla nueva en "Reglas aprendidas"
+  arriba — `INTERRUPT` solo tiene sentido para tools que de verdad tardan
+  perceptiblemente; para cualquier tool con caché o resolución rápida,
+  usar `WHEN_IDLE` por default. Y: cuando se reporta un síntoma de voz
+  ambiguo ("se corta", "se interrumpe solo"), pedir el log real de
+  consola de esa sesión ANTES de suponer que es el VAD del servidor — acá
+  el VAD no tuvo nada que ver.
+
+## [2026-07-28] Sesión de voz completamente muda: `mic_device_index`/`speaker_device_index` apuntaban a dispositivos incompatibles, no era código
+
+- **Qué pasó:** después de las Fases 11-16, el usuario reportó sesiones de
+  voz que se quedaban "escuchando y escuchando" sin responder NUNCA
+  (confirmado hablando 40+ segundos seguidos sin una sola transcripción),
+  y por separado que nunca salía sonido de ningún parlante. Se investigó
+  en orden: gate de RMS (Fase 11), scheduling de tools (Fase 12/14), eco
+  acústico real, "Escuchar este dispositivo" de Windows, si FxSound
+  (audio enhancer) estaba corriendo — todo eso se descartó uno por uno
+  con evidencia real, sin encontrar la causa.
+- **Causa raíz real, encontrada al leer el error real en consola** (no en
+  el `server_content`, que no decía nada — el problema nunca llegaba a
+  generar tráfico del lado del servidor): `mic_device_index` apuntaba a
+  un dispositivo MME agregado ("Varios micrófonos") que nunca captó audio
+  real, y por separado `speaker_device_index` apuntaba a "FxSound
+  Speakers" (dispositivo virtual del audio-enhancer FxSound) que acepta
+  el audio sin error pero no lo reproduce si la app no está activamente
+  procesando. Al corregir a dispositivos WASAPI reales (mic 18, salida
+  14), un nuevo error explícito apareció recién ahí:
+  `Error opening RawInputStream: Invalid sample rate [PaErrorCode -9997]`
+  — WASAPI en este sistema no acepta abrir el stream a la tasa fija que
+  pide la Live API (16kHz entrada / 24kHz salida) sin negociación previa,
+  a diferencia de MME/DirectSound que resamplean solos. La combinación que
+  finalmente funcionó de punta a punta fue mic MME (índice 2) + salida MME
+  (índice 5, "Auriculares (Realtek) MME") — ambos de la MISMA familia de
+  host API, ambos confirmados con un test aislado (`sd.RawInputStream`/
+  `RawOutputStream` directo, sin la app) antes de tocar `settings.json`.
+- **Cómo se detectó:** el error de PortAudio (`Invalid sample rate`) solo
+  se imprime en la consola del proceso (`print(f"[VoiceEngine] Error:
+  {e}")`, capturado por el loop de `_sesion_async`) — no llega nunca al
+  `server_content` ni a la UI. Hasta que no se pidió el log completo de
+  una sesión recién iniciada (no reutilizada, no en medio de otra prueba)
+  ese error nunca apareció en los logs que el usuario pegaba, porque
+  filtraba/cortaba la consola antes de esa línea o la sesión previa
+  todavía estaba "viva" a medias.
+- **Solución aplicada:** `mic_device_index=2`, `speaker_device_index=5`,
+  ambos MME, ambos verificados con un script aislado que abre el stream a
+  la tasa EXACTA que usa `voice_engine.py` (`16000`/`24000`) antes de
+  guardarlos en config — no alcanza con que el selector de dispositivos o
+  el panel de nivel (Fase 13) los acepten, esos no abren streams a una
+  tasa fija.
+- **Estrategia para no repetirlo:** ver regla nueva en "Reglas aprendidas"
+  arriba. En criollo: cuando una sesión de voz no reacciona a NADA
+  (ni una transcripción, ni un error visible en el `server_content`), el
+  primer sospechoso es el par mic/salida — no el VAD, no el prompt, no el
+  scheduling de tools. Pedir SIEMPRE el log completo de una sesión recién
+  arrancada (no reciclada) antes de teorizar; el error real de PortAudio
+  vive ahí y solo ahí.
+- **Actualización, confirmada dos veces en vivo:** incluso con el par
+  correcto de dispositivos (mic 2 / salida 5, MME), la sesión de voz volvía
+  a quedar completamente muda si el usuario acababa de correr el test de
+  mic (Fase 13) o el de salida (Fase 17) justo antes de arrancarla — sin
+  ningún error visible, mismo síntoma exacto. El dispositivo de audio en
+  Windows queda en mal estado un momento después de que otro stream lo
+  tocó (abrir/cerrar), y una sesión nueva abierta demasiado rápido después
+  hereda ese estado roto. Solución aplicada: `server.py` guarda el
+  timestamp de la última vez que un test de audio tocó un stream
+  (`_ultimo_test_audio`), y `/api/voz/iniciar` espera hasta completar 2s
+  desde ese momento antes de abrir la sesión real (`_COOLDOWN_TEST_AUDIO_S`).
+  No confirmado todavía si 2s alcanza siempre — es un punto de partida, no
+  un número medido a fondo.
+
+---
+
+### Fase 16 (YouTube scraping) — sigue sin funcionar en uso real, sin diagnosticar
+
+- **Síntoma reportado por el usuario (2026-07-28):** después de la Fase 16
+  (scraping stdlib de `youtube.com/results` + regex `videoId`), pedirle a
+  Jarvis que busque/reproduzca un video de YouTube sigue sin andar en uso
+  real, aunque en su momento se verificó en vivo con "lofi hip hop radio" y
+  "bad bunny" devolviendo URLs reales.
+- **Estado: NO investigado todavía.** No hay log fresco de un intento
+  reciente fallido (consola de `Jarvis-Desktop-Voice-Assistant\Jarvis`), así
+  que no se sabe si el fallo es: (a) el ruteo `musica` vs `buscar_web` que
+  decide el modelo, (b) el scraping en sí devolviendo `None` (YouTube pudo
+  cambiar el HTML, o bloquear el `User-Agent` fijo `Mozilla/5.0`), (c) el
+  llamado a `abrir_url` fallando silenciosamente, o (d) otra cosa.
+- **Próximo paso cuando se retome:** pedir el log de consola completo de un
+  intento fresco de "poné [algo] en YouTube" por voz Y por texto, y/o correr
+  `buscar_youtube()` de `app/actions/musica.py` aislado (fuera de la app,
+  sin tocar `datos/`) contra una query real para ver si el regex sigue
+  matcheando el HTML actual de YouTube.
+- **No confundir con la Fase 18 (prompt):** esta fase no toca `musica.py` ni
+  `navegador.py`, así que si el bug persiste después de la Fase 18 no es
+  regresión de esta fase — ya estaba roto antes.

@@ -294,7 +294,10 @@ def _scan_start_menu(name: str):
 
 def open_app(parameters: dict, response=None, player=None) -> str:
     """Launch a desktop application by spoken name."""
-    raw = (parameters or {}).get("app_name", "") or ""
+    # El modelo a veces manda `name` en vez de `app_name` pese al schema
+    # (visto en vivo: `open_app({'name': 'word'})`) — fallback barato, mismo
+    # patrón que ya usa recordatorios.py con message/description.
+    raw = (parameters or {}).get("app_name", "") or (parameters or {}).get("name", "") or ""
     if not raw.strip():
         return "App name is required, sir."
 

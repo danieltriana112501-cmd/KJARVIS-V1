@@ -74,9 +74,15 @@ Módulos de ahí que NO se copian nunca (riesgo de seguridad, fuera de alcance):
 | 10 | `phase-10-pip-overlay.md` | Ventana flotante mini (picture-in-picture) siempre encima | 09 |
 | 11 | `phase-11-fluidez-voz.md` | Matar la mordida de 600ms post-respuesta y devolver el barge-in (flag auriculares + gate de energía) | 01, 06 |
 | 12 | `phase-12-tools-async.md` | `buscar_web`/`open_app` como `NON_BLOCKING` + `scheduling`, frases de relleno, caché del Menú Inicio | 05, 06 |
+| 13 | `phase-13-test-microfono.md` | Panel "Probar micrófono": nivel en vivo (RMS), sin espectro completo | 01, 08 |
+| 14 | `phase-14-vad-padding.md` | VAD: agregar SOLO `prefix_padding_ms`, aislado — riesgo real, puede revertirse | 06, 11 |
+| 15 | `phase-15-vad-silence.md` | VAD: agregar `silence_duration_ms=800`, segunda variable aislada — usuario confirmó que el servidor lo cortaba antes de terminar | 14 |
+| 16 | `phase-16-youtube-scraping.md` | YouTube sin `youtube-search-python` (scraping stdlib, JARVIS-HRZ), libera pin de `httpx`, ruteo correcto `musica` vs `buscar_web` | 04, 05 |
+| 17 | `phase-17-test-salida.md` | Probador de salida: tono corto audible + error real de PortAudio devuelto a la UI (nunca solo en consola) | 01, 13 |
+| 18 | `phase-18-prompt-identidad.md` | Identidad única (`app/persona.py`) para texto y voz: prohíbe repetir la pregunta, humor ácido, avisos sin chiste | 05, 06 |
 
-Fases 13+ (VAD, prompt, personaje/overlay) aún no tienen archivo propio —
-su orden y contenido detallado están en
+Fases 19+ (personaje/overlay) aún no tienen archivo propio — su
+orden y contenido detallado están en
 `plans/INVESTIGACION-2026-07-27-voz-tools-ui.md`, secciones 9, 12 y 13.10.
 
 ## Estado
@@ -96,3 +102,9 @@ actualizarse a sí misma si aplica):
 - [ ] Fase 10
 - [x] Fase 11
 - [x] Fase 12
+- [x] Fase 13
+- [x] Fase 14
+- [x] Fase 15
+- [x] Fase 16
+- [x] Fase 17
+- [x] Fase 18

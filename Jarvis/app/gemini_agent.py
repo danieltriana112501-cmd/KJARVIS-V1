@@ -15,6 +15,7 @@ from urllib.parse import quote
 from google import genai
 from google.genai import types
 
+from app import persona
 from app.matcher import match_local
 from app.actions.tareas import tareas as _tareas
 from app.actions.recordatorios import recordatorios as _recordatorios
@@ -123,15 +124,19 @@ def _tool_declarations(non_blocking: bool = False) -> types.Tool:
         ),
         types.FunctionDeclaration(
             name="musica",
-            description="Controla la reproducción de música: reproducir una canción por nombre, pausar, "
-                        "siguiente, anterior, subir o bajar el volumen.",
+            description="Busca y reproduce videos, canciones o música en YouTube por nombre (abre el video "
+                        "directo en el navegador), además de pausar, siguiente, anterior, subir o bajar el "
+                        "volumen. Usar SIEMPRE esta tool (no buscar_web) para cualquier pedido de reproducir "
+                        "o buscar algo en YouTube, poner una canción, un video musical, etc.",
             parameters_json_schema=_MUSICA_SCHEMA,
         ),
         types.FunctionDeclaration(
             name="buscar_web",
             description="Busca información real y actual en internet (noticias, precios, clima, hechos "
                         "recientes, recomendaciones) y devuelve un resumen de lo encontrado. Usar siempre "
-                        "que la respuesta dependa de información que pueda haber cambiado recientemente.",
+                        "que la respuesta dependa de información que pueda haber cambiado recientemente. "
+                        "NO usar para YouTube ni para reproducir música/videos — para eso usar la tool "
+                        "musica.",
             parameters_json_schema=_BUSCAR_WEB_SCHEMA,
             **behavior,
         ),
@@ -184,7 +189,9 @@ class GeminiAgent:
 
     def _resolver_con_gemini(self, texto: str, player=None) -> str:
         contents = [types.Content(role="user", parts=[types.Part(text=texto)])]
-        config = types.GenerateContentConfig(tools=[self._tools_texto])
+        config = types.GenerateContentConfig(
+            tools=[self._tools_texto], system_instruction=persona.IDENTIDAD,
+        )
 
         for _ in range(_MAX_TURNOS_FUNCTION_CALLING):
             response = self.client.models.generate_content(
@@ -242,8 +249,8 @@ class GeminiAgent:
 
         if bool(parameters.get("abrir_navegador", False)):
             try:
-                import webbrowser
-                webbrowser.open(f"https://www.google.com/search?q={quote(query)}")
+                from app.actions.navegador import abrir_url
+                abrir_url(f"https://www.google.com/search?q={quote(query)}")
             except Exception:
                 pass
 

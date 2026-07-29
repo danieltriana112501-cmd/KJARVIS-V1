@@ -363,6 +363,25 @@ textarea { resize: vertical; }
 }
 .btn-primario:hover, .btn-secundario:hover { background: var(--line); color: var(--bg); }
 .btn-secundario { margin-top: 0; padding: 0 14px; white-space: nowrap; }
+.btn-secundario.activo { background: var(--line); color: var(--bg); }
+
+/* ---------- Test de micrófono (Fase 13) ---------- */
+.mic-test-barra {
+  flex: 1;
+  height: 30px;
+  border: 2px solid var(--line);
+  background: var(--bg);
+  overflow: hidden;
+}
+.mic-test-nivel {
+  height: 100%;
+  width: 0%;
+  background: var(--line);
+  transition: width 80ms linear;
+}
+/* Sin señal vs. con señal se distingue por intensidad (texto normal vs.
+   negrita+brillante), no por color, siguiendo la guía visual del proyecto. */
+.msg.con-senal { color: var(--text); font-weight: 700; }
 
 .msg {
   font-size: 12px;

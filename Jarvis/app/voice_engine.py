@@ -36,25 +36,32 @@ from google.genai import types
 # esto empieza a fallar, reemplazar por un cálculo manual con `array`.
 import audioop
 
-from app import config
+from app import config, persona
 from app.gemini_agent import GeminiAgent
 
+# Identidad compartida con el agente de texto (Fase 18, ver persona.py) +
+# la instrucción de frase de relleno, específica de voz porque en texto no
+# hay espera perceptible por el usuario.
 _SISTEMA = (
-    "Sos Jarvis, un asistente de voz personal. Respondé en español, de forma "
-    "breve y directa, con trato cordial hacia quien te habla. Cuando vayas a "
-    "usar las herramientas buscar_web o open_app, decí antes una frase corta "
-    "(ej. 'dale, un segundo' o 'ya me fijo') en vez de quedarte en silencio "
-    "mientras esperás el resultado."
+    persona.prompt_voz() + "\n\n"
+    "Cuando vayas a usar las herramientas buscar_web o open_app, decí antes "
+    "una frase corta (ej. 'dale, un segundo' o 'ya me fijo') en vez de "
+    "quedarte en silencio mientras esperás el resultado."
 )
 
 # Tools NON_BLOCKING (ver gemini_agent.py:_tool_declarations) y el
-# `scheduling` con el que responden cuando terminan: buscar_web puede
-# terminar de decir lo que estaba diciendo antes de reportar (WHEN_IDLE);
-# open_app corta lo que esté diciendo para confirmar ya que se abrió
-# (INTERRUPT). Lo que no está acá (tareas/recordatorios/musica) es BLOCKING.
+# `scheduling` con el que responden cuando terminan. `open_app` era
+# INTERRUPT en el plan original (Fase 12) pensando en un escaneo lento del
+# Menú Inicio — pero con la caché de la misma Fase 12 resuelve casi
+# instantáneo, y INTERRUPT corta a Jarvis A MITAD DE LA FRASE DE RELLENO
+# ("dale, un segundo...") casi siempre, lo cual se sentía y se logueaba
+# como "interrumpido por el usuario" sin que el usuario dijera nada (visto
+# en vivo, Fase 14). WHEN_IDLE deja terminar la frase corta y responde
+# ahí — con resolución casi instantánea la diferencia percibida es mínima
+# y no hay corte falso.
 _TOOLS_NO_BLOQUEANTES = {
     "buscar_web": types.FunctionResponseScheduling.WHEN_IDLE,
-    "open_app": types.FunctionResponseScheduling.INTERRUPT,
+    "open_app": types.FunctionResponseScheduling.WHEN_IDLE,
 }
 
 _SAMPLE_RATE_IN = 16000
@@ -197,12 +204,26 @@ class VoiceEngine:
             # que Jarvis respondió (reportado probando la app real).
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
-            # NO agregar `realtime_input_config` acá: se probó configurar el
-            # VAD explícitamente (start/end sensitivity, silence_duration_ms)
-            # y el servidor dejó de mandar CUALQUIER mensaje — ni una sola
-            # transcripción, con el mic enviando audio normalmente. Sin ese
-            # campo, el VAD automático por defecto funciona. Ver
-            # plans/ERRORES.md, entrada Fase 06 (VAD explícito).
+            # Fase 06 (ver plans/ERRORES.md) probó `realtime_input_config` con
+            # sensibilidades explícitas y `silence_duration_ms` bajo, y el
+            # servidor dejó de mandar CUALQUIER mensaje. Fase 14 agregó
+            # `prefix_padding_ms` aislado y sobrevivió (no es el campo en sí
+            # lo que rompía todo). Fase 15 agrega la SEGUNDA variable, con el
+            # usuario confirmando en vivo que sin esto el servidor corta su
+            # turno antes de que termine de hablar (silencios/pausas para
+            # pensar se leían como "ya terminó"). `silence_duration_ms=800`
+            # es el techo del rango que la doc oficial recomienda (500-800ms;
+            # por debajo de 500 fragmenta el habla) — se elige el techo,
+            # no el piso, porque el síntoma reportado es "corta corto", no
+            # "tarda en responder". NO tocar sensibilidades
+            # (start/end_of_speech_sensitivity) todavía — sigue siendo una
+            # variable por vez.
+            realtime_input_config=types.RealtimeInputConfig(
+                automatic_activity_detection=types.AutomaticActivityDetection(
+                    prefix_padding_ms=300,
+                    silence_duration_ms=800,
+                ),
+            ),
         )
 
         mic_idx = config.get("mic_device_index", -1)
@@ -422,9 +443,17 @@ class VoiceEngine:
 
     async def _resolver_tool_no_bloqueante(self, session, loop: asyncio.AbstractEventLoop, fc) -> None:
         t0 = time.monotonic()
-        resultado = await loop.run_in_executor(
-            None, self.agente.ejecutar_tool_directa, fc.name, dict(fc.args or {}),
-        )
+        # Si `ejecutar_tool_directa` tira (no debería — cada tool atrapa sus
+        # propias excepciones — pero si algún día una se escapa), igual hay
+        # que mandar una FunctionResponse: sin ella el modelo queda esperando
+        # una respuesta que nunca llega y el turno de audio se cuelga entero
+        # (mismo síntoma que "se quedó escuchando, nunca respondió").
+        try:
+            resultado = await loop.run_in_executor(
+                None, self.agente.ejecutar_tool_directa, fc.name, dict(fc.args or {}),
+            )
+        except Exception as e:
+            resultado = f"Error ejecutando '{fc.name}': {e}"
         respuesta = types.FunctionResponse(
             id=fc.id, name=fc.name, response={"result": resultado},
             scheduling=_TOOLS_NO_BLOQUEANTES[fc.name],
