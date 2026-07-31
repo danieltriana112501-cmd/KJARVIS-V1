@@ -367,6 +367,7 @@ textarea { resize: vertical; }
 
 /* ---------- Test de micrófono (Fase 13) ---------- */
 .mic-test-barra {
+  position: relative;
   flex: 1;
   height: 30px;
   border: 2px solid var(--line);
@@ -378,6 +379,16 @@ textarea { resize: vertical; }
   width: 0%;
   background: var(--line);
   transition: width 80ms linear;
+}
+/* Marca vertical del umbral de barge-in configurado (calibración a ojo). */
+.mic-test-umbral {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  left: 0%;
+  background: var(--text);
+  opacity: 0.6;
 }
 /* Sin señal vs. con señal se distingue por intensidad (texto normal vs.
    negrita+brillante), no por color, siguiendo la guía visual del proyecto. */

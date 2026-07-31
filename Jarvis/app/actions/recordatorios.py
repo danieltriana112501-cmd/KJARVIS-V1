@@ -398,7 +398,7 @@ def listar_todo() -> list:
 
 def recordatorios(parameters: dict, player=None) -> str:
     """Gestiona recordatorios y alarmas. Acciones: list | add | delete."""
-    action = str(parameters.get("action", "list")).lower().strip()
+    action = str(parameters.get("action", "")).lower().strip()
 
     if action in ("list", "read", "leer", "listar"):
         pend = listar_todo()

@@ -159,6 +159,17 @@ _REMINDER_ADD_PATTERNS = [
     re.compile(r"^recu[eé]rdame\s+(?:que\s+(?:tengo\s+que\s+)?)?(.+)$", re.IGNORECASE),
 ]
 
+# La palabra "recordatorio" ya desambigua de tareas/música explícitamente, a
+# diferencia de "recuérdame" (que también puede ser una tarea) — no exige
+# `_HORA_EXPLICITA_PATTERN` porque si falta la hora `recordatorios.py` ya
+# pregunta "¿para cuándo?" en vez de fallar en silencio. Sin este patrón,
+# "ponme un recordatorio de sacar la basura" caía en el comodín de música
+# (`_MUSICA_PLAY_PATTERNS` matchea cualquier "pon...") y abría YouTube.
+_REMINDER_ADD_EXPLICIT_PATTERNS = [
+    re.compile(r"^pon(?:me)?\s+un\s+recordatorio\s+(?:de\s+|que\s+)?(.+)$", re.IGNORECASE),
+    re.compile(r"^agrega(?:me)?\s+un\s+recordatorio\s+(?:de\s+|que\s+)?(.+)$", re.IGNORECASE),
+]
+
 # Lo que la fase considera "hora explícita": dispara recordatorios en vez de
 # tareas ("a las 5", "en 20 minutos") aunque el verbo sea el mismo ("recuérdame").
 _HORA_EXPLICITA_PATTERN = re.compile(
@@ -213,6 +224,20 @@ def _match_recordatorios(texto_limpio: str) -> dict | None:
                 continue
             return {"tool": "recordatorios", "parameters": {"action": "add", "kind": "alarm", "when": resto}}
 
+    for patron in _REMINDER_ADD_EXPLICIT_PATTERNS:
+        m = patron.match(texto_limpio)
+        if m:
+            resto = m.group(1).strip(" ,")
+            if not resto:
+                continue
+            mensaje, cuando = _extraer_cuando(resto)
+            if not mensaje:
+                continue
+            return {
+                "tool": "recordatorios",
+                "parameters": {"action": "add", "kind": "reminder", "message": mensaje, "when": cuando},
+            }
+
     for patron in _REMINDER_ADD_PATTERNS:
         m = patron.match(texto_limpio)
         if m:
@@ -256,6 +281,16 @@ _MUSICA_PREV_PATTERN = re.compile(r"^canci[oó]n\s+anterior$", re.IGNORECASE)
 _MUSICA_VOLUME_UP_PATTERN = re.compile(r"^sube(?:r)?\s+el\s+volumen$", re.IGNORECASE)
 _MUSICA_VOLUME_DOWN_PATTERN = re.compile(r"^baja(?:r)?\s+el\s+volumen$", re.IGNORECASE)
 
+# El comodín "pon/reproduce/toca X" de abajo captura CUALQUIER cosa que no
+# haya matcheado antes — si X menciona explícitamente un recordatorio, alarma
+# o tarea (con una redacción que ninguno de los patrones específicos de
+# arriba cubrió), es un pedido mal resuelto de otra tool, no una canción con
+# ese nombre literal. Sin este guard, "ponme el recordatorio de sacar la
+# basura" terminaba abriendo YouTube.
+_MUSICA_EXCLUYE_PATTERN = re.compile(
+    r"^(?:un|una|el|la|los|las)?\s*(?:recordatorio|alarma|tarea)s?\b", re.IGNORECASE
+)
+
 
 def _match_musica(texto_limpio: str) -> dict | None:
     if _MUSICA_PAUSE_PATTERN.match(texto_limpio):
@@ -273,7 +308,7 @@ def _match_musica(texto_limpio: str) -> dict | None:
         m = patron.match(texto_limpio)
         if m:
             query = m.group(1).strip(" ,")
-            if query:
+            if query and not _MUSICA_EXCLUYE_PATTERN.match(query):
                 return {"tool": "musica", "parameters": {"action": "play", "query": query}}
     return None
 

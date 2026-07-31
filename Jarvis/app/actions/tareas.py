@@ -267,7 +267,7 @@ def tareas(parameters: dict, player=None) -> str:
     `player` es opcional (lo usará la interfaz de la Fase 08 para loggear); no se
     depende de su existencia acá.
     """
-    action = str(parameters.get("action", "list")).lower().strip()
+    action = str(parameters.get("action", "")).lower().strip()
 
     if action in ("list", "read", "leer", "listar"):
         items = _load()

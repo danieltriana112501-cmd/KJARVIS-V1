@@ -41,13 +41,15 @@ from app.gemini_agent import GeminiAgent
 
 # Identidad compartida con el agente de texto (Fase 18, ver persona.py) +
 # la instrucción de frase de relleno, específica de voz porque en texto no
-# hay espera perceptible por el usuario.
-_SISTEMA = (
-    persona.prompt_voz() + "\n\n"
-    "Cuando vayas a usar las herramientas buscar_web o open_app, decí antes "
-    "una frase corta (ej. 'dale, un segundo' o 'ya me fijo') en vez de "
-    "quedarte en silencio mientras esperás el resultado."
-)
+# hay espera perceptible por el usuario. Acento regional desactivado por
+# ahora (español neutro) -- ver `persona.elegir_acento` para reactivarlo.
+def _sistema() -> str:
+    return (
+        persona.prompt_voz() + "\n\n"
+        "Cuando vayas a usar las herramientas buscar_web o open_app, di "
+        "antes una frase corta (ej. 'dale, un segundo' o 'ya me fijo') en "
+        "vez de quedarte en silencio mientras esperas el resultado."
+    )
 
 # Tools NON_BLOCKING (ver gemini_agent.py:_tool_declarations) y el
 # `scheduling` con el que responden cuando terminan. `open_app` era
@@ -62,16 +64,36 @@ _SISTEMA = (
 _TOOLS_NO_BLOQUEANTES = {
     "buscar_web": types.FunctionResponseScheduling.WHEN_IDLE,
     "open_app": types.FunctionResponseScheduling.WHEN_IDLE,
+    # `musica` hace scraping de red a YouTube (~0.9s medido) antes de poder
+    # abrir el navegador — bloquear `_recibir_turno` ese tiempo entero
+    # colgaba el resto del turno de voz (mismo motivo que buscar_web/
+    # open_app). `tareas` y `recordatorios` NO están acá: son lectura/
+    # escritura de JSON local (<1ms medido), agregarles NON_BLOCKING solo
+    # metería latencia perceptible sin ganancia real.
+    "musica": types.FunctionResponseScheduling.WHEN_IDLE,
 }
 
 _SAMPLE_RATE_IN = 16000
 _SAMPLE_RATE_OUT = 24000
 _CHUNK_MS = 30
 
-# Punto de partida sugerido por el plan de Fase 11, NO calibrado escuchando
-# de verdad todavía — si el barge-in dispara solo (se escucha a sí mismo),
-# subir este valor; si no dispara con voz normal fuerte, bajarlo.
-_UMBRAL_RMS_ECO = 500
+# Punto de partida sugerido por el plan de Fase 11 si el usuario nunca tocó
+# `umbral_rms_eco` en config — leído en caliente al conectar (ver
+# `_UMBRAL_RMS_ECO_DEFAULT` abajo). Calibrar de oído con el panel de mic-test
+# (`/api/mic-test/nivel` ya muestra este umbral superpuesto al nivel real):
+# si el barge-in dispara solo (Jarvis se escucha a sí mismo), subir el valor
+# en `datos/settings.json`; si no dispara con voz normal fuerte, bajarlo.
+_UMBRAL_RMS_ECO_DEFAULT = 500
+
+# Tiempo sin NINGÚN mensaje del servidor mientras hay una respuesta pendiente
+# (`_esperando_respuesta=True`) antes de asumir que la sesión quedó muda y
+# forzar una reconexión. Sin este watchdog, `_recibir` puede quedar
+# esperando un websocket que dejó de mandar CUALQUIER mensaje —ni siquiera
+# un error visible— y la app se ve "escuchando" para siempre (visto en vivo,
+# ver plans/ERRORES.md). No se usa un timeout de silencio genérico porque el
+# usuario callado pensando es un estado normal y frecuente; el watchdog solo
+# actúa cuando YA había un turno en curso.
+_TIMEOUT_PROCESANDO_S = 15.0
 
 
 def _rms_pcm16(chunk: bytes) -> float:
@@ -88,12 +110,23 @@ def _en_ventana_de_eco(cola_salida: "queue.Queue | None", ultimo_audio_ts: float
 
 
 class VoiceEngine:
-    MODEL = "gemini-2.5-flash-native-audio-latest"
+    # native-audio-latest ignora el `parameters_json_schema` de las tools y
+    # manda nombres de campo inventados (ej. `nombre`/`fecha_hora` en vez de
+    # `query`/`when`) — confirmado probando las 4 tools reales contra la API.
+    # 3.1-flash-live-preview respeta el schema en el mismo test.
+    MODEL = "gemini-3.1-flash-live-preview"
     _UMBRAL_HABLANDO_S = 0.6
     # Ventana propia del gate de eco de `_enviar_audio`, separada a propósito
     # de `_UMBRAL_HABLANDO_S` (que es del estado de UI, Fase 09) — la Fase 11
     # pide que el mute del mic no dependa de `hablando` directamente.
     _VENTANA_MUTEO_S = 0.6
+
+    # Reconexiones seguidas (cada una duró menos de _DURACION_SANA_S) antes
+    # de rendirse y dejar la sesión caída con `ultimo_error` visible. Sin
+    # este techo, un fallo persistente (red caída, API con problemas)
+    # reconectaría infinitamente en silencio.
+    _MAX_RECONEXIONES_SEGUIDAS = 5
+    _DURACION_SANA_S = 30.0
 
     def __init__(self, api_key: str, voice: str, agente: GeminiAgent):
         self._client = genai.Client(api_key=api_key)
@@ -101,6 +134,7 @@ class VoiceEngine:
         self.agente = agente
         self._thread: threading.Thread | None = None
         self._detener_flag: threading.Event | None = None
+        self._detenido_por_usuario = False
         self._activo = False
         self.ultimo_error: str | None = None
         self._ultimo_audio_ts = 0.0
@@ -113,6 +147,17 @@ class VoiceEngine:
         # garbage collector puede recolectar una task "fire and forget" a
         # mitad de camino (error clásico de asyncio, ver plans/ERRORES.md).
         self._tools_pendientes: list[asyncio.Task] = []
+        # Handle de `session_resumption`: si el servidor lo marca `resumable`
+        # (ver `_recibir_turno`), reconectar con este handle recupera el
+        # contexto de la conversación en vez de arrancar en blanco — sin
+        # esto cada corte (15 min de límite duro, GoAway, red) perdía toda
+        # la charla previa. `None` = sesión nueva sin historial que resumir.
+        self._handle_resumption: str | None = None
+        # Timestamp del último mensaje CUALQUIERA del servidor (no solo los
+        # que el código interpreta) — lo usa el watchdog de `_sesion_async`
+        # para detectar una sesión que dejó de responder (ver
+        # `_TIMEOUT_PROCESANDO_S`).
+        self._ultimo_evento_ts = 0.0
 
     @property
     def activo(self) -> bool:
@@ -164,10 +209,12 @@ class VoiceEngine:
             return
         self.ultimo_error = None
         self._detener_flag = threading.Event()
+        self._detenido_por_usuario = False
         self._esperando_respuesta = False
         self._buf_usuario = ""
         self._buf_jarvis = ""
         self.transcripciones = []
+        self._handle_resumption = None
         self._activo = True
         self._thread = threading.Thread(target=self._correr_en_thread, daemon=True)
         self._thread.start()
@@ -175,29 +222,63 @@ class VoiceEngine:
     def detener_sesion(self) -> None:
         if not self._activo or not self._detener_flag:
             return
+        self._detenido_por_usuario = True
         self._detener_flag.set()
         if self._thread:
             self._thread.join(timeout=10)
         self._activo = False
 
     def _correr_en_thread(self) -> None:
-        try:
-            asyncio.run(self._sesion_async())
-        except Exception as e:
-            self.ultimo_error = str(e)
-            print(f"[VoiceEngine] Error: {e}")
-        finally:
-            self._activo = False
+        """Loop de reconexión: una sesión Live cortada (límite de 15 min,
+        GoAway, red, watchdog) no es un error terminal — se reconecta sola
+        con `_handle_resumption` si el servidor lo dio por resumible. Solo
+        para de reconectar si el usuario apretó "detener" o si varias
+        reconexiones seguidas mueren rápido (fallo persistente, no un corte
+        aislado)."""
+        intentos_fallidos = 0
+        while not self._detener_flag.is_set():
+            inicio = time.monotonic()
+            try:
+                asyncio.run(self._sesion_async())
+            except Exception as e:
+                self.ultimo_error = str(e)
+                print(f"[VoiceEngine][{time.strftime('%H:%M:%S')}] Error: {e}")
+
+            if self._detenido_por_usuario or self._detener_flag.is_set():
+                break
+
+            duracion = time.monotonic() - inicio
+            intentos_fallidos = 0 if duracion > self._DURACION_SANA_S else intentos_fallidos + 1
+            if intentos_fallidos > self._MAX_RECONEXIONES_SEGUIDAS:
+                self.ultimo_error = self.ultimo_error or "La sesión de voz se cortó repetidamente."
+                print(f"[VoiceEngine][{time.strftime('%H:%M:%S')}] "
+                      f"{self._MAX_RECONEXIONES_SEGUIDAS} reconexiones seguidas fallaron rápido, abandono.")
+                break
+
+            espera = min(1.0 * intentos_fallidos, 5.0)
+            print(f"[VoiceEngine][{time.strftime('%H:%M:%S')}] sesión cortada tras {duracion:.1f}s, "
+                  f"reconectando en {espera:.1f}s (handle={'sí' if self._handle_resumption else 'no'})...")
+            self._detener_flag.wait(espera)
+
+        self._activo = False
 
     async def _sesion_async(self) -> None:
         live_config = types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             tools=[self.agente.tools],
-            system_instruction=_SISTEMA,
+            system_instruction=_sistema(),
+            # `language_code` PROBADO y RECHAZADO por la API en vivo:
+            # "Unsupported language code 'es-419' for model
+            # models/gemini-2.5-flash-native-audio-latest" (1007, ver
+            # plans/ERRORES.md). No hay código regional colombiano
+            # documentado para este modelo — el acento se controla SOLO por
+            # léxico en el prompt (persona.py), no por este campo. No volver
+            # a probar otro `language_code` sin confirmar antes en la doc
+            # oficial de idiomas soportados por la Live API.
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=self.voice)
-                )
+                ),
             ),
             # Sin esto, la Live API no manda ningún texto — solo audio — y no
             # había forma de mostrar en pantalla lo que el usuario dijo ni lo
@@ -224,6 +305,23 @@ class VoiceEngine:
                     silence_duration_ms=800,
                 ),
             ),
+            # Handle de la sesión anterior si `_recibir_turno` guardó uno
+            # `resumable` — reconecta con el contexto de la charla en vez de
+            # arrancar en blanco. `None` en la primera conexión. Ver
+            # INVESTIGACION-2026-07-27, sección de sesión (ítem 16): esto es
+            # lo que evita el corte duro a los 15 minutos.
+            session_resumption=types.SessionResumptionConfig(handle=self._handle_resumption),
+            # Ventana deslizante del lado del servidor: descarta los turnos
+            # más viejos al pasar `trigger_tokens` en vez de cortar la sesión
+            # entera cuando se llena la ventana de contexto (128k, ~25
+            # tokens/s de audio). `target_tokens=4_000` es el valor de
+            # ejemplo de la doc oficial — implica olvidar turnos viejos en
+            # sesiones muy largas, aceptable frente a la alternativa (sesión
+            # cortada del todo).
+            context_window_compression=types.ContextWindowCompressionConfig(
+                trigger_tokens=100_000,
+                sliding_window=types.SlidingWindow(target_tokens=4_000),
+            ),
         )
 
         mic_idx = config.get("mic_device_index", -1)
@@ -236,8 +334,16 @@ class VoiceEngine:
             if config.get("voz_ultratumba", False) else None
         )
 
+        # Señal de "esta conexión particular debe cerrarse y `_correr_en_thread`
+        # debe reconectar" — separada de `_detener_flag` (que es "el usuario
+        # apretó detener, no reconectar nunca más"). Un watchdog o un GoAway
+        # del servidor setean esto pero NO deben terminar la sesión entera.
+        reconectar = asyncio.Event()
+
         async with self._client.aio.live.connect(model=self.MODEL, config=live_config) as session:
-            print(f"[VoiceEngine][{time.strftime('%H:%M:%S')}] sesion conectada, modelo={self.MODEL}")
+            print(f"[VoiceEngine][{time.strftime('%H:%M:%S')}] sesion conectada, modelo={self.MODEL}, "
+                  f"reanudando={'sí' if self._handle_resumption else 'no'}")
+            self._ultimo_evento_ts = time.monotonic()
             loop = asyncio.get_running_loop()
             cola_in: asyncio.Queue[bytes] = asyncio.Queue()
 
@@ -272,20 +378,37 @@ class VoiceEngine:
             hilo_out.start()
 
             enviar_task = asyncio.create_task(self._enviar_audio(session, cola_in, usar_auriculares))
-            recibir_task = asyncio.create_task(self._recibir(session, loop))
+            recibir_task = asyncio.create_task(self._recibir(session, loop, reconectar))
             try:
-                while not self._detener_flag.is_set():
+                while not self._detener_flag.is_set() and not reconectar.is_set():
                     # Si alguna de las dos tareas murió (excepción propia o
-                    # corte del servidor), no tiene sentido seguir: se corta
-                    # la sesión y se reporta. Antes la excepción quedaba
-                    # invisible dentro de la task y la app parecía "colgada".
+                    # corte del servidor), no tiene sentido seguir esta
+                    # conexión: se marca para reconectar. Antes esto ponía
+                    # `_detener_flag` directo y mataba la sesión entera en
+                    # vez de solo esta conexión.
                     for t, nombre in ((enviar_task, "enviar"), (recibir_task, "recibir")):
                         if t.done():
                             exc = t.exception()
                             msg = f"tarea '{nombre}' terminó" + (f": {exc!r}" if exc else " sin error")
                             print(f"[VoiceEngine][{time.strftime('%H:%M:%S')}] {msg}")
                             self.ultimo_error = msg
-                            self._detener_flag.set()
+                            reconectar.set()
+
+                    # Watchdog: hay un turno del usuario pendiente de
+                    # respuesta y no llegó NINGÚN mensaje del servidor (ni
+                    # siquiera uno que el código no entienda) en más de
+                    # `_TIMEOUT_PROCESANDO_S` — la sesión quedó muda sin
+                    # error visible (ver plans/ERRORES.md, "se quedó
+                    # procesando 80 segundos"). No dispara con el usuario
+                    # simplemente en silencio porque exige `_esperando_respuesta`.
+                    if (self._esperando_respuesta and not self.hablando
+                            and time.monotonic() - self._ultimo_evento_ts > _TIMEOUT_PROCESANDO_S):
+                        msg = (f"sin respuesta del servidor por más de "
+                               f"{_TIMEOUT_PROCESANDO_S:.0f}s con un turno pendiente")
+                        print(f"[VoiceEngine][{time.strftime('%H:%M:%S')}] watchdog: {msg}, reconectando")
+                        self.ultimo_error = msg
+                        reconectar.set()
+
                     await asyncio.sleep(0.2)
             finally:
                 enviar_task.cancel()
@@ -328,6 +451,10 @@ class VoiceEngine:
         # entrada, no la API). Quitar una vez diagnosticado el reporte del
         # usuario de "responde lento / no responde" en voz.
         n = 0
+        # Leído una sola vez al conectar, mismo patrón que mic/speaker/
+        # auriculares — ajustarlo desde el panel de calibración requiere
+        # reiniciar la sesión de voz para que tome efecto.
+        umbral_rms_eco = config.get("umbral_rms_eco", _UMBRAL_RMS_ECO_DEFAULT)
         while True:
             chunk = await cola_in.get()
             n += 1
@@ -344,7 +471,7 @@ class VoiceEngine:
             # encima del eco) deja pasar el audio real para permitir barge-in.
             if not usar_auriculares and self._ventana_de_eco_activa():
                 rms = _rms_pcm16(chunk)
-                if rms > _UMBRAL_RMS_ECO:
+                if rms > umbral_rms_eco:
                     print(f"[VoiceEngine][{time.strftime('%H:%M:%S')}] barge-in detectado, RMS={rms:.0f}")
                 else:
                     chunk = b"\x00" * len(chunk)
@@ -352,18 +479,31 @@ class VoiceEngine:
                 audio=types.Blob(data=chunk, mime_type=f"audio/pcm;rate={_SAMPLE_RATE_IN}")
             )
 
-    async def _recibir(self, session, loop: asyncio.AbstractEventLoop) -> None:
+    async def _recibir(self, session, loop: asyncio.AbstractEventLoop, reconectar: asyncio.Event) -> None:
         # `session.receive()` es un generador POR TURNO: se agota cuando el
         # modelo termina de responder. Sin este `while`, la tarea terminaba
         # después del primer intercambio y no se leía nada más en toda la
         # sesión — de ahí el síntoma "responde una vez y después se queda
         # escuchando para siempre". Hay que volver a pedirlo cada turno.
-        while True:
-            await self._recibir_turno(session, loop)
+        while not reconectar.is_set():
+            await self._recibir_turno(session, loop, reconectar)
 
-    async def _recibir_turno(self, session, loop: asyncio.AbstractEventLoop) -> None:
+    async def _recibir_turno(self, session, loop: asyncio.AbstractEventLoop, reconectar: asyncio.Event) -> None:
         async for msg in session.receive():
             ts = time.strftime('%H:%M:%S')
+            # Cualquier mensaje cuenta como "el servidor sigue vivo" para el
+            # watchdog — no solo los tipos que el código de abajo interpreta.
+            self._ultimo_evento_ts = time.monotonic()
+
+            if msg.session_resumption_update and msg.session_resumption_update.resumable:
+                self._handle_resumption = msg.session_resumption_update.new_handle
+                print(f"[VoiceEngine][{ts}] handle de reanudación actualizado")
+
+            if msg.go_away:
+                print(f"[VoiceEngine][{ts}] GoAway del servidor, "
+                      f"tiempo restante={msg.go_away.time_left}, reconectando")
+                reconectar.set()
+                return
 
             # DEBUG temporal: sin esto no hay forma de distinguir "el servidor
             # no manda nada" de "manda algo que el código no interpreta".
@@ -488,7 +628,7 @@ def _check() -> None:
     fuerte = struct.pack("<800h", *([20000, -20000] * 400))
     assert _rms_pcm16(b"") == 0.0, "chunk vacío debería dar RMS 0"
     assert _rms_pcm16(silencio) < 10, "RMS de silencio debería ser ~0"
-    assert _rms_pcm16(fuerte) > _UMBRAL_RMS_ECO, "RMS de audio fuerte debería superar el umbral"
+    assert _rms_pcm16(fuerte) > _UMBRAL_RMS_ECO_DEFAULT, "RMS de audio fuerte debería superar el umbral"
 
     cola_vacia = queue.Queue()
     cola_con_datos = queue.Queue()

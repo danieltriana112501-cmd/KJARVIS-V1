@@ -15,15 +15,20 @@ ventana de contexto más allá de una muestra (o un contador de fase
 continuo, que es igual de barato):
 
 - pasabajos de un polo — apaga agudos, da tono apagado/cavernoso.
-- modulación en anillo (portadora ~40Hz) — mete el timbre metálico/
-  "poseído", típico de voz distorsionada de ultratumba.
-- saturación (soft clip con `tanh`) — distorsión armónica real, no solo
-  eco. Es no lineal pero por-muestra, sin memoria, así que tampoco corre
-  riesgo de desincronizar el stream.
+- modulación en anillo (portadora grave, ~30Hz) — mete el timbre metálico/
+  gutural.
+- saturación ASIMÉTRICA (`tanh` con drive distinto en el semiciclo positivo
+  y negativo) — a diferencia de un clip simétrico, esto mete armónicos
+  PARES, que es lo que da el "buzz"/gruñido (growl) de una voz tipo
+  Venom/monstruo en vez de una distorsión pareja de guitarra. Sigue siendo
+  no lineal pero por-muestra, sin memoria.
 - eco corto con feedback — resonancia de cueva.
 
 Todos con estado de UNA muestra (o una fase) de memoria, así que el estado
-viaja de un chunk al siguiente sin clicks.
+viaja de un chunk al siguiente sin clicks. Un pitch-down real (más grave de
+verdad, no solo más distorsionado) sigue sin ser seguro acá por el motivo
+de arriba — esto se acerca al carácter (gutural, sucio, cavernoso) sin
+tocar la duración del audio.
 """
 from __future__ import annotations
 
@@ -37,14 +42,15 @@ class FiltroUltratumba:
         self._alfa_lp = 0.35
         self._prev_lp = 0.0
 
-        self._freq_mod = 45.0
-        self._mezcla_mod = 0.5
+        self._freq_mod = 30.0
+        self._mezcla_mod = 0.6
         self._muestra_idx = 0
 
-        self._drive = 2.2
+        self._drive_pos = 5.5
+        self._drive_neg = 2.5
 
-        self._feedback = 0.35
-        self._mezcla_eco = 0.35
+        self._feedback = 0.4
+        self._mezcla_eco = 0.4
         self._buffer = np.zeros(int(sample_rate * 0.05), dtype=np.float32)
         self._pos = 0
 
@@ -69,9 +75,14 @@ class FiltroUltratumba:
         moduladas = filtradas * portadora
         self._muestra_idx += n
 
-        drive = self._drive
-        techo = np.tanh(drive)
-        saturadas = np.tanh(moduladas / 32768.0 * drive) * (32768.0 / techo)
+        techo_pos = np.tanh(self._drive_pos)
+        techo_neg = np.tanh(self._drive_neg)
+        positivas = np.clip(moduladas, 0, None)
+        negativas = np.clip(moduladas, None, 0)
+        saturadas = (
+            np.tanh(positivas / 32768.0 * self._drive_pos) * (32768.0 / techo_pos)
+            + np.tanh(negativas / 32768.0 * self._drive_neg) * (32768.0 / techo_neg)
+        )
 
         buf, tam, pos = self._buffer, self._buffer.size, self._pos
         feedback, mezcla_eco = self._feedback, self._mezcla_eco

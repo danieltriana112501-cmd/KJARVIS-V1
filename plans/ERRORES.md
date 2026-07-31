@@ -794,3 +794,24 @@ revelaron un supuesto falso sobre una librería/API externa.
 - **No confundir con la Fase 18 (prompt):** esta fase no toca `musica.py` ni
   `navegador.py`, así que si el bug persiste después de la Fase 18 no es
   regresión de esta fase — ya estaba roto antes.
+
+---
+
+### Fase 18 (prompt) — `speech_config.language_code="es-419"` rechazado por la API
+
+- **Contexto:** al pedir acento colombiano, se intentó `language_code="es-419"`
+  en `types.SpeechConfig` (`voice_engine.py`) para alejar la pronunciación del
+  español rioplatense por defecto. El SDK lo aceptó sin quejarse al construir
+  el objeto — mismo patrón que el `behavior` de Fase 12.
+- **Error real, recién en `session.connect()`:** `1007 None. Unsupported
+  language code 'es-419' for model models/gemini-2.5-flash-native-audio-latest`.
+  Confirmado en vivo, 3 sesiones seguidas, mismo error.
+- **Solución aplicada:** se sacó `language_code` por completo. El acento
+  colombiano (rolo/paisa/costeño, sorteado por sesión) se controla SOLO por
+  léxico en `persona.py` — no hay control de pronunciación real disponible
+  para este modelo. Sin ese campo la sesión conecta normal.
+- **Regla:** este modelo (`gemini-2.5-flash-native-audio-latest`) NO acepta
+  `es-419` como `language_code`. Antes de probar cualquier otro código de
+  idioma/región, confirmar contra la documentación oficial de idiomas
+  soportados de la Live API — no asumir que un código ISO/BCP-47 válido en
+  general es válido para este modelo específico.

@@ -33,6 +33,12 @@ DEFAULTS = {
     # anterior (webbrowser.open, sujeto al selector de perfiles). Ver
     # app/actions/navegador.py y plans/INVESTIGACION..., sección 4.2.
     "chrome_profile_dir": "",
+    # Umbral RMS (PCM16) por encima del cual `voice_engine._enviar_audio`
+    # trata el mic como barge-in real en vez de eco propio. Depende del
+    # hardware (mic/parlantes) de cada máquina — se calibra a ojo con el
+    # panel de mic-test, que superpone este valor al nivel en vivo. Ver
+    # `voice_engine._UMBRAL_RMS_ECO_DEFAULT`.
+    "umbral_rms_eco": 500,
 }
 
 VOCES_DISPONIBLES = [

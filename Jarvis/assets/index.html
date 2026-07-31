@@ -205,10 +205,24 @@
 
       <label>PROBAR MICRÓFONO</label>
       <div class="fila-input-btn">
-        <div class="mic-test-barra"><div class="mic-test-nivel" id="micTestNivel"></div></div>
+        <div class="mic-test-barra">
+          <div class="mic-test-nivel" id="micTestNivel"></div>
+          <div class="mic-test-umbral" id="micTestUmbralMarca" title="Umbral de barge-in actual"></div>
+        </div>
         <button type="button" class="btn-secundario" id="btnMicTest">PROBAR</button>
       </div>
       <p class="msg" id="micTestMsg">Sin señal</p>
+
+      <label>UMBRAL DE BARGE-IN (ECO)</label>
+      <div class="fila-input-btn">
+        <input type="number" id="cfgUmbralEco" min="10" max="5000" step="10">
+      </div>
+      <p class="msg">
+        Mientras Jarvis habla, si esto se pasa alto tu voz no lo interrumpe (eco
+        propio confundido con tu voz); si está muy bajo, se corta con nada. Probá
+        el micrófono arriba mientras Jarvis suena y ajustá hasta que la barra
+        cruce la marca solo con tu voz real.
+      </p>
 
       <label>PROBAR SALIDA</label>
       <div class="fila-input-btn">

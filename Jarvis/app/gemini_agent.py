@@ -129,6 +129,7 @@ def _tool_declarations(non_blocking: bool = False) -> types.Tool:
                         "volumen. Usar SIEMPRE esta tool (no buscar_web) para cualquier pedido de reproducir "
                         "o buscar algo en YouTube, poner una canción, un video musical, etc.",
             parameters_json_schema=_MUSICA_SCHEMA,
+            **behavior,
         ),
         types.FunctionDeclaration(
             name="buscar_web",
@@ -190,7 +191,8 @@ class GeminiAgent:
     def _resolver_con_gemini(self, texto: str, player=None) -> str:
         contents = [types.Content(role="user", parts=[types.Part(text=texto)])]
         config = types.GenerateContentConfig(
-            tools=[self._tools_texto], system_instruction=persona.IDENTIDAD,
+            tools=[self._tools_texto],
+            system_instruction=persona.prompt_texto(),
         )
 
         for _ in range(_MAX_TURNOS_FUNCTION_CALLING):

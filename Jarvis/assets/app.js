@@ -168,6 +168,7 @@ async function cargarConfig() {
   $("#cfgApiKey").value = cfg.gemini_api_key || "";
   $("#cfgAuriculares").checked = !!cfg.usar_auriculares;
   $("#cfgUltratumba").checked = !!cfg.voz_ultratumba;
+  $("#cfgUmbralEco").value = cfg.umbral_rms_eco ?? 500;
   $("#cfgLocation").value = cfg.location || "";
   $("#cfgMorningBrief").value = cfg.morning_brief_time || "";
 
@@ -233,6 +234,7 @@ $("#formConfig").addEventListener("submit", async (e) => {
       gemini_api_key: $("#cfgApiKey").value,
       usar_auriculares: $("#cfgAuriculares").checked,
       voz_ultratumba: $("#cfgUltratumba").checked,
+      umbral_rms_eco: Number($("#cfgUmbralEco").value) || 500,
       voice: $("#cfgVoz").value,
       mic_device_index: Number($("#cfgMic").value),
       speaker_device_index: Number($("#cfgSpeaker").value),
@@ -257,6 +259,7 @@ async function pollMicTestNivel() {
       return;
     }
     $("#micTestNivel").style.width = Math.min(100, data.nivel) + "%";
+    $("#micTestUmbralMarca").style.left = Math.min(100, data.umbral) + "%";
     const conSenal = data.nivel >= data.umbral;
     $("#micTestMsg").textContent = conSenal ? "Te escucho" : "Sin señal";
     $("#micTestMsg").classList.toggle("con-senal", conSenal);

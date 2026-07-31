@@ -25,7 +25,7 @@ from app.tts_local import hablar
 from app.voice_engine import (
     VoiceEngine,
     _rms_pcm16,
-    _UMBRAL_RMS_ECO,
+    _UMBRAL_RMS_ECO_DEFAULT,
     _SAMPLE_RATE_IN,
     _SAMPLE_RATE_OUT,
     _CHUNK_MS,
@@ -301,9 +301,10 @@ def get_mic_test_nivel():
     return jsonify({
         "activo": _mic_test["activo"],
         "nivel": _mic_test["nivel"],
-        # Mismo umbral (sin calibrar) que usa el gate de eco/barge-in de
-        # VoiceEngine — este panel sirve justamente para calibrarlo a ojo.
-        "umbral": _normalizar_nivel(_UMBRAL_RMS_ECO),
+        # Mismo umbral (ajustable en datos/settings.json vía /api/config)
+        # que usa el gate de eco/barge-in de VoiceEngine — este panel sirve
+        # justamente para calibrarlo a ojo.
+        "umbral": _normalizar_nivel(config.get("umbral_rms_eco", _UMBRAL_RMS_ECO_DEFAULT)),
     })
 
 
