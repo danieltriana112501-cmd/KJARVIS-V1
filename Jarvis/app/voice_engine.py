@@ -77,12 +77,10 @@ _SAMPLE_RATE_IN = 16000
 _SAMPLE_RATE_OUT = 24000
 _CHUNK_MS = 30
 
-# Punto de partida sugerido por el plan de Fase 11 si el usuario nunca tocó
-# `umbral_rms_eco` en config — leído en caliente al conectar (ver
-# `_UMBRAL_RMS_ECO_DEFAULT` abajo). Calibrar de oído con el panel de mic-test
-# (`/api/mic-test/nivel` ya muestra este umbral superpuesto al nivel real):
-# si el barge-in dispara solo (Jarvis se escucha a sí mismo), subir el valor
-# en `datos/settings.json`; si no dispara con voz normal fuerte, bajarlo.
+# Ya NO se usa para barge-in (ver comentario en la clase: con parlantes el
+# mic va en mute total mientras Jarvis suena). Queda solo como referencia
+# del panel de mic-test (`/api/mic-test/nivel` dibuja este umbral encima
+# del nivel real) y porque `umbral_rms_eco` sigue existiendo en config.
 _UMBRAL_RMS_ECO_DEFAULT = 500
 
 # Tiempo sin NINGÚN mensaje del servidor mientras hay una respuesta pendiente
@@ -100,6 +98,22 @@ def _rms_pcm16(chunk: bytes) -> float:
     if not chunk:
         return 0.0
     return audioop.rms(chunk, 2)
+
+
+# SIN barge-in por voz cuando se usan PARLANTES. Se intentó dos veces
+# distinguir eco de voz por energía y las dos fallaron con logs reales:
+#   1. Umbral fijo (`umbral_rms_eco`): el eco del parlante llegaba al mic con
+#      RMS 500-3800 > 500, pasaba entero, y Gemini transcribía la voz de
+#      Jarvis como usuario ('usuario dijo: "Pues ciérrala"' justo después de
+#      que Jarvis dijera esa frase) interrumpiéndose a sí mismo en bucle.
+#   2. Gate adaptativo (EMA del eco + chunks sostenidos): la latencia entre
+#      encolar audio y que el sonido llegue al mic hace que la calibración
+#      mida silencio; cuando el eco por fin llega queda clasificado como voz
+#      ('barge-in confirmado, piso=500' = nunca aprendió el eco). Mismo bucle.
+# Separar eco de voz en el mismo canal requiere cancelación de eco real
+# (webrtc-apm / speexdsp) — hasta entonces, con parlantes el mic va en
+# silencio mientras Jarvis suena y se interrumpe con Ctrl+Espacio; con
+# auriculares el barge-in por voz funciona completo porque no hay eco.
 
 
 def _en_ventana_de_eco(cola_salida: "queue.Queue | None", ultimo_audio_ts: float,
@@ -455,30 +469,21 @@ class VoiceEngine:
         # entrada, no la API). Quitar una vez diagnosticado el reporte del
         # usuario de "responde lento / no responde" en voz.
         n = 0
-        # Leído una sola vez al conectar, mismo patrón que mic/speaker/
-        # auriculares — ajustarlo desde el panel de calibración requiere
-        # reiniciar la sesión de voz para que tome efecto.
-        umbral_rms_eco = config.get("umbral_rms_eco", _UMBRAL_RMS_ECO_DEFAULT)
         while True:
             chunk = await cola_in.get()
             n += 1
             if n % 50 == 0:
                 print(f"[VoiceEngine][{time.strftime('%H:%M:%S')}] mic activo, {n} chunks enviados")
-            # Sin cancelación de eco real, el parlante+mic en el mismo
-            # dispositivo hacen que Jarvis "se escuche a sí mismo". Se sigue
-            # mandando SILENCIO (mismos bytes, en cero) en vez de saltear el
+            # Con parlantes: mute TOTAL mientras Jarvis suena (ver comentario
+            # sobre barge-in arriba de la clase — dos intentos por energía
+            # fallaron, esto es lo único que corta el bucle de eco de raíz).
+            # Se manda SILENCIO (mismos bytes, en cero) en vez de saltear el
             # envío del todo — cortar el streaming por completo (probado, ver
             # plans/ERRORES.md) rompe el detector de voz del servidor para el
-            # resto de la sesión. La diferencia con antes: el mute ya no es
-            # binario por `hablando` — con auriculares no hay eco posible
-            # (nunca mutea) y sin auriculares un RMS alto (usuario gritando
-            # encima del eco) deja pasar el audio real para permitir barge-in.
+            # resto de la sesión. Con auriculares no hay eco: nunca mutea y
+            # el barge-in por voz queda a cargo del VAD del servidor.
             if not usar_auriculares and self._ventana_de_eco_activa():
-                rms = _rms_pcm16(chunk)
-                if rms > umbral_rms_eco:
-                    print(f"[VoiceEngine][{time.strftime('%H:%M:%S')}] barge-in detectado, RMS={rms:.0f}")
-                else:
-                    chunk = b"\x00" * len(chunk)
+                chunk = b"\x00" * len(chunk)
             await session.send_realtime_input(
                 audio=types.Blob(data=chunk, mime_type=f"audio/pcm;rate={_SAMPLE_RATE_IN}")
             )

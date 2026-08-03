@@ -46,5 +46,53 @@
     "enabled": true,
     "fired": false,
     "created_at": "2026-08-02T22:18:50.033536"
+  },
+  {
+    "id": "b46291da7935",
+    "message": "Almorzar",
+    "trigger_at": "2026-08-03T13:00:00",
+    "kind": "reminder",
+    "recurrence": "none",
+    "weekdays": [],
+    "action_prompt": "",
+    "enabled": true,
+    "fired": false,
+    "created_at": "2026-08-02T23:03:49.554983"
+  },
+  {
+    "id": "882de3e49fb6",
+    "message": "Lo que sea que tengas que recordar",
+    "trigger_at": "2026-08-03T09:00:00",
+    "kind": "reminder",
+    "recurrence": "none",
+    "weekdays": [],
+    "action_prompt": "",
+    "enabled": true,
+    "fired": false,
+    "created_at": "2026-08-02T23:05:35.866790"
+  },
+  {
+    "id": "a1bac1c229f7",
+    "message": "revisar plataforma",
+    "trigger_at": "2026-08-03T14:00:00",
+    "kind": "reminder",
+    "recurrence": "none",
+    "weekdays": [],
+    "action_prompt": "",
+    "enabled": true,
+    "fired": false,
+    "created_at": "2026-08-02T23:13:11.663890"
+  },
+  {
+    "id": "c4696686bbd6",
+    "message": "revisar compromisos",
+    "trigger_at": "2026-08-03T09:00:00",
+    "kind": "reminder",
+    "recurrence": "daily",
+    "weekdays": [],
+    "action_prompt": "",
+    "enabled": true,
+    "fired": false,
+    "created_at": "2026-08-02T23:13:45.936702"
   }
 ]

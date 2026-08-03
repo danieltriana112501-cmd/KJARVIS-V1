@@ -87,7 +87,7 @@
         </div>
         <div class="chat-log" id="chatLog"></div>
         <form class="chat-form" id="chatForm">
-          <input type="text" id="chatInput" placeholder="Escribí un comando o consulta..." autocomplete="off">
+          <input type="text" id="chatInput" placeholder="Escribe un comando o consulta..." autocomplete="off">
           <button type="submit">Enviar</button>
         </form>
       </div>
@@ -250,15 +250,16 @@
       </div>
       <p class="msg" id="micTestMsg">Sin señal</p>
 
-      <label>UMBRAL DE BARGE-IN (ECO)</label>
+      <label>MARCA DE REFERENCIA DEL TEST DE MIC</label>
       <div class="fila-input-btn">
         <input type="number" id="cfgUmbralEco" min="10" max="5000" step="10">
       </div>
       <p class="msg">
-        Mientras Jarvis habla, si esto se pasa alto tu voz no lo interrumpe (eco
-        propio confundido con tu voz); si está muy bajo, se corta con nada. Probá
-        el micrófono arriba mientras Jarvis suena y ajustá hasta que la barra
-        cruce la marca solo con tu voz real.
+        Solo mueve la marca vertical de la barra de arriba, como referencia
+        visual del nivel de tu voz. Interrumpir a Jarvis por voz funciona con
+        auriculares; con altavoces el micrófono se silencia mientras él habla
+        (para que no se escuche a sí mismo) — ahí se interrumpe con
+        Ctrl+Espacio.
       </p>
 
       <label>PROBAR SALIDA</label>

@@ -1,3 +1,10 @@
+> **⚠️ El proyecto REAL vive en [`Jarvis/`](Jarvis/README.md).**
+> Lo de abajo es el README del repo original que se usó como punto de
+> partida — no describe lo que hay acá. Documentación del asistente actual
+> (voz Gemini Live, overlay, personalidad, arquitectura):
+> [`Jarvis/README.md`](Jarvis/README.md). Plan por fases y bitácora de
+> errores: [`plans/`](plans/README.md).
+
 # Jarvis Desktop Voice Assistant🔥
 
 <img src="https://giffiles.alphacoders.com/212/212508.gif" alt="">

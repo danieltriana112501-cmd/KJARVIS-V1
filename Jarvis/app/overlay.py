@@ -78,9 +78,40 @@ INTERVALO_DERIVA_MS = (6000, 12000)
 PASO_DERIVA_PX = 1         # px por tick -- lento y deliberado, no errático
 INTERVALO_MOVIMIENTO_MS = 40
 INTERVALO_POLL_MS = 500
+# 60 polls de 500ms = 30s sin poder hablarle al servidor -> el overlay se
+# cierra solo. Sin esto, cuando la ventana principal moría sin pasar por el
+# `finally` de ui.py (crash, kill, cierre forzado) el overlay quedaba
+# huérfano: la esfera seguía flotando sin app detrás, y el próximo arranque
+# sumaba otra encima (se llegaron a ver tres a la vez).
+FALLOS_MAX_SERVIDOR = 60
 INTERVALO_CLICKTHROUGH_MS = 100
 INTERVALO_ATAJO_MS = 50    # revisar el estado del teclado seguido para que el atajo se sienta responsive
 INTERVALO_ARRASTRE_MS = 16 # ~60fps: menos que esto y el arrastre se ve a los saltos
+
+
+ERROR_ALREADY_EXISTS = 183
+NOMBRE_MUTEX = "JarvisOverlayInstanciaUnica"
+
+
+def _tomar_instancia_unica(nombre: str = NOMBRE_MUTEX) -> bool:
+    """True si este proceso es el ÚNICO overlay vivo.
+
+    Segunda mitad del arreglo de las esferas duplicadas: aunque el overlay
+    ahora se cierre solo cuando el servidor desaparece, entre el arranque de
+    uno nuevo y la muerte del viejo hay una ventana en la que conviven. El
+    mutex con nombre la cierra: el segundo proceso ve ERROR_ALREADY_EXISTS y
+    se va sin abrir ventana.
+
+    El handle queda abierto a propósito -- Windows libera el mutex cuando el
+    proceso termina, así que no hay nada que limpiar (y limpiarlo sería peor:
+    liberaría el nombre con el overlay todavía vivo).
+    """
+    if not hasattr(ctypes, "windll"):
+        return True  # fuera de Windows no hay mutex con nombre; no bloquear
+    handle = ctypes.windll.kernel32.CreateMutexW(None, False, nombre)
+    if not handle:
+        return True  # no se pudo crear: mejor arrancar que quedarse mudo
+    return ctypes.windll.kernel32.GetLastError() != ERROR_ALREADY_EXISTS
 
 
 def _color_hex(rgb: tuple[int, int, int]) -> str:
@@ -185,6 +216,8 @@ class Overlay:
         self.atajo_presionado_antes = False
         self.boton_presionado_antes = False
         self._offset = (0, 0)
+        self.hubo_contacto = False
+        self.fallos_seguidos = 0
 
         self.root.update_idletasks()  # antes de tocar el hwnd -- ver punto 3
         self.hwnd = self.root.winfo_id()
@@ -234,9 +267,11 @@ class Overlay:
     # ---------------- polling ----------------
 
     def _poll_estado(self) -> None:
+        contacto = False
         try:
             with urllib.request.urlopen(API_ESTADO, timeout=1) as resp:
                 nuevo = json.loads(resp.read()).get("estado", "inactivo")
+            contacto = True
             if nuevo not in ESTADOS:
                 nuevo = "inactivo"
             if nuevo != self.estado:
@@ -254,13 +289,36 @@ class Overlay:
         try:
             with urllib.request.urlopen(API_PIP_ESTADO, timeout=1) as resp:
                 habilitado = json.loads(resp.read()).get("habilitado", True)
+            contacto = True
             if habilitado != self.visible:
                 self.visible = habilitado
                 (self.root.deiconify() if habilitado else self.root.withdraw())
         except Exception:
             pass
 
+        if self._servidor_se_fue(contacto):
+            self.root.destroy()  # corta el mainloop: el proceso termina
+            return
+
         self.root.after(INTERVALO_POLL_MS, self._poll_estado)
+
+    def _servidor_se_fue(self, contacto: bool) -> bool:
+        """True cuando hay que darse por muerto: el servidor respondió alguna
+        vez y después dejó de responder por `FALLOS_MAX_SERVIDOR` polls
+        seguidos.
+
+        El `hubo_contacto` importa: al arrancar, `ui.py` lanza este proceso
+        justo antes de levantar Flask, así que los primeros polls fallan
+        siempre y no hay que cerrarse por eso.
+        """
+        if contacto:
+            self.hubo_contacto = True
+            self.fallos_seguidos = 0
+            return False
+        if not self.hubo_contacto:
+            return False
+        self.fallos_seguidos += 1
+        return self.fallos_seguidos >= FALLOS_MAX_SERVIDOR
 
     def _cfg_actual(self) -> dict:
         f = (time.monotonic() - self.t_cambio) / DURACION_TRANSICION_S
@@ -347,6 +405,8 @@ class Overlay:
 
 
 def main() -> None:
+    if not _tomar_instancia_unica():
+        return  # ya hay un overlay vivo -- no abrir una segunda esfera
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(1)  # antes de crear cualquier Tk()
     except Exception:
@@ -382,6 +442,29 @@ def _check() -> None:
     assert np.allclose(_interpolar_nube(a, b, 1.0), b), "f=1 debería dar la nube B"
     assert np.allclose(_interpolar_nube(a, b, 0.5), (a + b) / 2), "f=0.5 debería ser el punto medio"
     assert np.allclose(_interpolar_nube(a, b, 5.0), b), "f fuera de rango debe clampear"
+
+    # Instancia única: el primer CreateMutexW gana, el segundo (mismo nombre)
+    # tiene que perder. Nombre propio del test para no pelear con un overlay
+    # real que esté corriendo mientras se corre el check.
+    nombre_test = NOMBRE_MUTEX + "Check"
+    assert _tomar_instancia_unica(nombre_test) is True, "el primero debería tomar la instancia"
+    assert _tomar_instancia_unica(nombre_test) is False, "el segundo debería rebotar"
+
+    # Muerte por servidor ausente. Se prueba sobre un objeto pelado: la lógica
+    # solo toca dos contadores, no hace falta levantar una ventana real.
+    class _Falso:
+        hubo_contacto = False
+        fallos_seguidos = 0
+        _servidor_se_fue = Overlay._servidor_se_fue
+
+    f = _Falso()
+    for _ in range(FALLOS_MAX_SERVIDOR + 5):
+        assert f._servidor_se_fue(False) is False, "sin contacto previo nunca debe cerrarse"
+    assert f._servidor_se_fue(True) is False, "con contacto no debe cerrarse"
+    assert f.fallos_seguidos == 0, "un contacto exitoso debe resetear el contador"
+    for i in range(FALLOS_MAX_SERVIDOR - 1):
+        assert f._servidor_se_fue(False) is False, f"no debe cerrarse todavía (fallo {i + 1})"
+    assert f._servidor_se_fue(False) is True, "al llegar al máximo de fallos debe cerrarse"
 
     print("OK")
 

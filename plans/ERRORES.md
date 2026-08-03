@@ -170,6 +170,16 @@ revelaron un supuesto falso sobre una librería/API externa.
   techo físico de int16 (32767); una escala lineal ingenua deja casi todo
   el rango dinámico de una voz normal pegado cerca de 0. Ver entrada
   2026-07-28 Fase 13.
+- **No intentar separar eco de voz por energía (RMS) con mic+parlante en
+  el mismo equipo — es un callejón sin salida, se necesita AEC real.** Se
+  intentó dos veces (umbral fijo y gate adaptativo con EMA + chunks
+  sostenidos) y las dos fallaron con logs reales por el mismo motivo de
+  fondo: la energía no distingue "eco más fuerte de lo esperado" de "voz
+  del usuario", y la latencia encolar→parlante→mic hace que cualquier
+  calibración al arrancar la ventana mida silencio. Solución vigente: con
+  parlantes, mute total (silencio) mientras Jarvis suena, interrupción por
+  Ctrl+Espacio; barge-in por voz solo con auriculares. El upgrade real es
+  webrtc-apm/speexdsp. Ver entrada 2026-08-02.
 - **`scheduling=INTERRUPT` en una tool `NON_BLOCKING` solo tiene sentido si
   esa tool tarda perceptiblemente — si resuelve rápido (por caché o
   porque siempre fue rápida), corta la frase de relleno/actual casi
@@ -815,3 +825,35 @@ revelaron un supuesto falso sobre una librería/API externa.
   idioma/región, confirmar contra la documentación oficial de idiomas
   soportados de la Live API — no asumir que un código ISO/BCP-47 válido en
   general es válido para este modelo específico.
+
+## [2026-08-02] Voz — el barge-in por energía transcribía a Jarvis como usuario (bucle de auto-interrupción)
+
+- **Qué pasó:** con parlantes (sin auriculares), Jarvis entraba en bucle:
+  respondía, se interrumpía solo a mitad de frase, y aparecían turnos de
+  usuario que nadie dijo. El log lo mostró literal: Jarvis dijo "Pues
+  ciérrala, no soy portero" y dos segundos después llegó
+  `usuario dijo: 'Pues ciérrala.'`; también `'cordero'` (eco de
+  "portero") y `'puerta abierta'` (eco de "Word abierto" mal transcrito).
+- **Causa raíz (intento 1, umbral fijo):** el gate de eco de la Fase 15
+  dejaba pasar como "barge-in" cualquier chunk con RMS mayor a
+  `umbral_rms_eco` (500). El eco del parlante llegaba al mic con RMS
+  500–3800, así que pasaba entero: Gemini lo transcribía como el usuario
+  y mandaba `interrupted`, cortando la propia respuesta que generaba el
+  eco. Bucle completo.
+- **Causa raíz (intento 2, gate adaptativo):** se reemplazó por un gate
+  con EMA del nivel de eco + exigencia de chunks sostenidos + calibración
+  de ~300ms por ventana. Falló igual: la latencia entre encolar el audio
+  y que el sonido salga del parlante y llegue al mic hace que la
+  calibración mida SILENCIO; cuando el eco por fin llega, queda por
+  encima del piso aprendido y se clasifica como voz
+  (`barge-in confirmado, piso=500` en el log = nunca aprendió el eco).
+- **Solución aplicada:** con parlantes, mute total mientras Jarvis suena
+  (se sigue mandando silencio para no romper el VAD del servidor, ver
+  entrada 2026-07-26 Fase 06); interrupción por Ctrl+Espacio. Con
+  auriculares no hay eco físico y el barge-in por voz sigue completo.
+  `_GateEco` se eliminó; el campo `umbral_rms_eco` queda solo como marca
+  visual del test de micrófono. Verificado con sesión real: cero turnos
+  fantasma, cero `interrupted` espurios, respuestas completas.
+- **Estrategia para no repetirlo:** ver regla nueva en "Reglas
+  aprendidas" (separar eco de voz por energía = callejón sin salida; el
+  camino real es AEC).
