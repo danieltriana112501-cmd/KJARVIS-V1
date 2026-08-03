@@ -1,0 +1,15 @@
+{
+  "id": "calavera",
+  "nombre": "Calavera",
+  "voz": "Kore",
+  "color_clave": "#FF00FE",
+  "tamano": [200, 200],
+  "estados": {
+    "inactivo":   { "gif": "inactivo.gif",   "fps": 8  },
+    "escuchando": { "gif": "escuchando.gif", "fps": 10 },
+    "hablando":   { "gif": "hablando.gif",   "fps": 12 },
+    "procesando": { "gif": "procesando.gif", "fps": 12 }
+  },
+  "situaciones": {},
+  "vineta": { "ancla": [100, 110], "ancho_max": 34 }
+}

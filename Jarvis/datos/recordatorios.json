@@ -1,1 +1,50 @@
-[]
+[
+  {
+    "id": "4e495357d9c6",
+    "message": "¿Y el mensaje de esto qué?",
+    "trigger_at": "2026-07-31T09:13:00",
+    "kind": "reminder",
+    "recurrence": "none",
+    "weekdays": [],
+    "action_prompt": "",
+    "enabled": false,
+    "fired": true,
+    "created_at": "2026-07-30T21:11:52.746841"
+  },
+  {
+    "id": "998018cbb3d1",
+    "message": "revisar plataforma",
+    "trigger_at": "2026-07-31T09:13:00",
+    "kind": "reminder",
+    "recurrence": "none",
+    "weekdays": [],
+    "action_prompt": "",
+    "enabled": false,
+    "fired": true,
+    "created_at": "2026-07-30T21:12:09.983986"
+  },
+  {
+    "id": "103c5c7d1d42",
+    "message": "prueba uno",
+    "trigger_at": "2026-08-03T09:00:00",
+    "kind": "reminder",
+    "recurrence": "daily",
+    "weekdays": [],
+    "action_prompt": "",
+    "enabled": true,
+    "fired": false,
+    "created_at": "2026-08-02T21:15:07.812249"
+  },
+  {
+    "id": "335f9db5a114",
+    "message": "almuerzo",
+    "trigger_at": "2026-08-03T13:00:00",
+    "kind": "reminder",
+    "recurrence": "none",
+    "weekdays": [],
+    "action_prompt": "",
+    "enabled": true,
+    "fired": false,
+    "created_at": "2026-08-02T22:18:50.033536"
+  }
+]

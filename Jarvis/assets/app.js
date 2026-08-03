@@ -330,13 +330,22 @@ function escapeHtml(s) {
   return div.innerHTML;
 }
 
+// Formato de la consola del mockup Orbital Command:
+//   [HH:MM:SS] [JARVIS] texto
+// El color de la línea depende de quién habla (ver .linea.jarvis/.usuario en
+// style.css); el timestamp siempre va en rojo tenue.
 function agregarLinea(quien, texto) {
   const log = $("#chatLog");
+  const hora = new Date().toLocaleTimeString("es", { hour12: false });
+  const rol = quien === "JARVIS" ? "jarvis" : "usuario";
   const div = document.createElement("div");
-  div.className = "linea";
-  div.innerHTML = `<span class="quien">${quien}:</span> ${escapeHtml(texto)}`;
+  div.className = "linea " + rol;
+  div.innerHTML =
+    `<span class="hora">[${hora}]</span>` +
+    `<span class="texto">[${escapeHtml(quien)}] ${escapeHtml(texto)}</span>`;
   log.appendChild(div);
   log.scrollTop = log.scrollHeight;
+  // El panel hero muestra siempre lo último que se dijo.
   $("#caption").textContent = texto;
 }
 
@@ -408,7 +417,7 @@ if (!MODO_MINI) {
   const actualizarPip = async () => {
     const estado = await api("/api/pip/estado");
     $("#btnPip").classList.toggle("activo", estado.habilitado);
-    $("#btnPipTexto").textContent = estado.habilitado ? "OCULTAR MINI" : "MOSTRAR MINI";
+    $("#btnPipTexto").textContent = estado.habilitado ? "OCULTAR JARVIS" : "MOSTRAR JARVIS";
   };
   $("#btnPip").addEventListener("click", async () => {
     await api("/api/pip/toggle", { method: "POST" });
@@ -417,13 +426,7 @@ if (!MODO_MINI) {
   actualizarPip();
 }
 
-// ---------------- Panel ASCII (calavera reactiva) ----------------
-// Arte base portado de plans/material/skull-illustration-source.tsx (Fase 09):
-// 1 solo frame estático, extraído a Jarvis/assets/skull_frame.json con la
-// técnica de regex + JSON.parse documentada en plans/material/ascii_skull.json.
-// Los 4 estados NO son frames distintos: se modulan sobre este mismo frame.
-
-const ASCII_CHARSET = " .:░▒▓█";
+// ---------------- Panel hero: espacio, nebulosa y estado ----------------
 
 const ESTADO_LABELS = {
   inactivo: "INACTIVO",
@@ -432,128 +435,234 @@ const ESTADO_LABELS = {
   procesando: "PROCESANDO",
 };
 
-const GLITCH_INTERVALO_MS = {
-  inactivo: [5000, 8000],
-  procesando: [2000, 4000],
-  escuchando: [1000, 2000],
-  hablando: [1000, 2000],
+// Título del hero por estado -- reemplaza al "NEURAL ECHO" fijo del mockup
+// (stitch_jarvis_cosmic_terminal/jarvis_main_console) para que el panel diga
+// algo real sobre lo que Jarvis está haciendo.
+const HERO_TITULOS = {
+  inactivo: "NEURAL ECHO",
+  escuchando: "SEÑAL ENTRANTE",
+  hablando: "TRANSMITIENDO",
+  procesando: "PROCESANDO",
 };
 
-let asciiOriginal = null; // Array<string>, copia intacta del frame para restaurar
-let asciiChars = null; // Array<string>, copia mutable (ruido de "hablando")
-let asciiNoEspacio = []; // índices de asciiChars que no son " " ni "\n"
+// Cómo se comporta el núcleo ("la nebulosa que habla") en cada estado.
+//   amplitud: cuánto vibra cada partícula, en px
+//   pulso:    velocidad del latido del radio (0 = no late)
+//   giro:     vueltas por segundo del cúmulo
+//   brillo:   multiplicador general
+// En `inactivo` todo va en 0: el panel queda COMPLETAMENTE quieto y el bucle
+// de animación ni siquiera se agenda (ver `dibujar`).
+const NUCLEO_POR_ESTADO = {
+  inactivo:   { amplitud: 0,   pulso: 0,   giro: 0,    brillo: 0.55 },
+  escuchando: { amplitud: 1.4, pulso: 1.6, giro: 0.06, brillo: 0.9 },
+  hablando:   { amplitud: 3.2, pulso: 2.6, giro: 0.10, brillo: 1.0 },
+  procesando: { amplitud: 0.8, pulso: 0.9, giro: 0.35, brillo: 0.75 },
+};
+
 let estadoActual = "inactivo";
-let glitchTimer = null;
-let ruidoTimer = null;
+let espacio = null; // API de la escena, la llena `iniciarEspacio`
 
-async function cargarAsciiSkull() {
-  const res = await fetch("/skull_frame.json");
-  const data = await res.json();
-  asciiOriginal = Array.from(data.frame);
-  asciiChars = asciiOriginal.slice();
-  asciiOriginal.forEach((ch, i) => {
-    if (ch !== " " && ch !== "\n") asciiNoEspacio.push(i);
-  });
-  renderAscii();
-  ajustarEscalaAscii();
-}
-
-function renderAscii() {
-  $("#asciiPre").textContent = asciiChars.join("");
-}
-
-// Alto máximo del panel ASCII — sin este tope, un arte de 99 líneas escalado
-// solo por ancho sigue midiendo cientos de px de alto y se come el espacio
-// del chat de abajo (reportado por el usuario probando la app real).
-const ALTURA_MAX_PANEL_ASCII = 260;
-
-function ajustarEscalaAscii() {
-  const cont = $("#panelAscii");
-  const pre = $("#asciiPre");
-  const wrap = $("#asciiScaleWrap");
-  if (!cont || !pre || !pre.textContent) return;
-  const disponibleAncho = cont.clientWidth - 32; // resta padding horizontal del panel
-  const disponibleAlto = ALTURA_MAX_PANEL_ASCII - 32;
-  const naturalAncho = pre.scrollWidth;
-  const naturalAlto = pre.scrollHeight;
-  const escalaAncho = disponibleAncho > 0 && naturalAncho > 0 ? disponibleAncho / naturalAncho : 1;
-  const escalaAlto = disponibleAlto > 0 && naturalAlto > 0 ? disponibleAlto / naturalAlto : 1;
-  const escala = Math.min(escalaAncho, escalaAlto, 1);
-  wrap.style.transform = `scale(${escala})`;
-  // ponytail: transform no cambia el tamaño de layout, así que fijamos la
-  // altura del contenedor a mano al tamaño ya escalado (si no, queda un
-  // hueco vacío del alto sin escalar debajo del arte).
-  cont.style.height = Math.ceil(naturalAlto * escala + 32) + "px";
-}
-
-new ResizeObserver(ajustarEscalaAscii).observe($("#panelAscii"));
-
-function dispararGlitch() {
-  const el = $("#panelAscii");
-  el.classList.remove("glitch");
-  void el.offsetWidth;
-  el.classList.add("glitch");
-}
-
-function programarGlitch() {
-  clearTimeout(glitchTimer);
-  const [min, max] = GLITCH_INTERVALO_MS[estadoActual] || GLITCH_INTERVALO_MS.inactivo;
-  const espera = min + Math.random() * (max - min);
-  glitchTimer = setTimeout(() => {
-    dispararGlitch();
-    programarGlitch();
-  }, espera);
-}
-
-function ruidoCaracteres() {
-  if (!asciiChars || !asciiNoEspacio.length) return;
-  const porcentaje = 0.01 + Math.random() * 0.02; // 1-3%
-  const cantidad = Math.max(1, Math.floor(asciiNoEspacio.length * porcentaje));
-  for (let i = 0; i < cantidad; i++) {
-    const idx = asciiNoEspacio[Math.floor(Math.random() * asciiNoEspacio.length)];
-    asciiChars[idx] = ASCII_CHARSET[Math.floor(Math.random() * ASCII_CHARSET.length)];
-  }
-  renderAscii();
-}
-
-function iniciarRuido() {
-  clearInterval(ruidoTimer);
-  ruidoTimer = setInterval(ruidoCaracteres, 100 + Math.random() * 50);
-}
-
-function detenerRuido() {
-  clearInterval(ruidoTimer);
-  ruidoTimer = null;
-  if (asciiOriginal && asciiChars) {
-    asciiChars = asciiOriginal.slice();
-    renderAscii();
-  }
-}
-
-function aplicarEstadoAscii(nuevo) {
+function aplicarEstado(nuevo) {
   if (nuevo === estadoActual) return;
   estadoActual = nuevo;
   $("#estadoTexto").textContent = ESTADO_LABELS[nuevo] || nuevo.toUpperCase();
-  $("#panelAscii").className = "panel-ascii " + nuevo;
-  dispararGlitch();
-  programarGlitch();
-  if (nuevo === "hablando") {
-    iniciarRuido();
-  } else {
-    detenerRuido();
-  }
+  $(".hero-titulo").textContent = HERO_TITULOS[nuevo] || HERO_TITULOS.inactivo;
+  $("#panelHero").className = "panel-hero corner-accent " + nuevo;
+  if (espacio) espacio.cambiarEstado(nuevo);
 }
 
 async function pollEstado() {
   try {
     const data = await api("/api/estado");
-    aplicarEstadoAscii(data.estado);
+    aplicarEstado(data.estado);
   } catch (e) {
     // ponytail: si el fetch falla (server reiniciando, etc.), se reintenta solo en el próximo tick.
   }
 }
 
-cargarAsciiSkull();
-programarGlitch();
+// ---------------- Escena espacial del hero ----------------
+// Canvas 2D, no WebGL: la escena es simple (gradientes + puntos) y así no
+// depende de que el driver acepte compilar shaders.
+//
+// Dos capas:
+//   1. FONDO estático -- nebulosa + estrellas, se dibuja UNA vez a un canvas
+//      offscreen y de ahí se copia. Nunca cambia, así que no cuesta nada.
+//   2. NÚCLEO dinámico -- el cúmulo de partículas que reacciona al estado.
+//      Solo se redibuja mientras Jarvis está haciendo algo; en reposo se
+//      dibuja un frame y el bucle se corta.
+
+const NEBULOSAS = [
+  // x, y y radio en fracción del panel; color y opacidad de la nube
+  { x: 0.68, y: 0.42, r: 0.55, color: "120, 20, 40", alfa: 0.30 },
+  { x: 0.52, y: 0.60, r: 0.48, color: "40, 25, 90", alfa: 0.26 },
+  { x: 0.82, y: 0.28, r: 0.38, color: "90, 30, 110", alfa: 0.22 },
+  { x: 0.25, y: 0.30, r: 0.42, color: "20, 35, 80", alfa: 0.20 },
+  { x: 0.70, y: 0.45, r: 0.20, color: "200, 40, 60", alfa: 0.28 },
+];
+
+const NUCLEO_X = 0.70;  // a la derecha para no chocar con el texto del hero
+const NUCLEO_Y = 0.44;
+const NUCLEO_PARTICULAS = 420;
+const ESTRELLAS = 260;
+
+function iniciarEspacio() {
+  const canvas = $("#canvasEspacio");
+  if (!canvas || !canvas.getContext) return null;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+
+  // Posiciones normalizadas [0,1]: sobreviven al resize sin "saltar".
+  const estrellas = [];
+  for (let i = 0; i < ESTRELLAS; i++) {
+    estrellas.push({
+      x: Math.random(),
+      y: Math.random(),
+      r: Math.random() < 0.88 ? 0.5 : 1.1,
+      a: 0.15 + Math.random() * 0.7,
+    });
+  }
+
+  // Cúmulo: más denso hacia el centro (Math.pow con exponente < 1 empuja los
+  // valores hacia arriba, así que se invierte para concentrar cerca de 0).
+  const nucleo = [];
+  for (let i = 0; i < NUCLEO_PARTICULAS; i++) {
+    nucleo.push({
+      rad: Math.pow(Math.random(), 0.55),
+      ang: Math.random() * Math.PI * 2,
+      achat: 0.55 + Math.random() * 0.45,   // aplana el cúmulo, lo vuelve elipse
+      fase: Math.random() * Math.PI * 2,
+      brillo: 0.25 + Math.random() * 0.75,
+    });
+  }
+
+  let ancho = 0;
+  let alto = 0;
+  let dpr = 1;
+  let fondo = null;     // canvas offscreen con nebulosa + estrellas
+  let animando = false;
+  let t0 = performance.now();
+
+  function dibujarFondo() {
+    fondo = document.createElement("canvas");
+    fondo.width = Math.max(1, Math.round(ancho * dpr));
+    fondo.height = Math.max(1, Math.round(alto * dpr));
+    const f = fondo.getContext("2d");
+    f.scale(dpr, dpr);
+
+    f.fillStyle = "#000";
+    f.fillRect(0, 0, ancho, alto);
+
+    // Nubes de nebulosa: gradientes radiales grandes y muy tenues.
+    const diagonal = Math.hypot(ancho, alto);
+    NEBULOSAS.forEach((n) => {
+      const cx = n.x * ancho;
+      const cy = n.y * alto;
+      const r = n.r * diagonal * 0.6;
+      const g = f.createRadialGradient(cx, cy, 0, cx, cy, r);
+      g.addColorStop(0, `rgba(${n.color}, ${n.alfa})`);
+      g.addColorStop(0.5, `rgba(${n.color}, ${n.alfa * 0.35})`);
+      g.addColorStop(1, `rgba(${n.color}, 0)`);
+      f.fillStyle = g;
+      f.fillRect(0, 0, ancho, alto);
+    });
+
+    estrellas.forEach((e) => {
+      f.fillStyle = `rgba(255, 255, 255, ${e.a})`;
+      f.beginPath();
+      f.arc(e.x * ancho, e.y * alto, e.r, 0, Math.PI * 2);
+      f.fill();
+    });
+  }
+
+  function dibujarNucleo(t) {
+    const cfg = NUCLEO_POR_ESTADO[estadoActual] || NUCLEO_POR_ESTADO.inactivo;
+    const cx = NUCLEO_X * ancho;
+    const cy = NUCLEO_Y * alto;
+    const base = Math.min(ancho, alto) * 0.26;
+    const latido = cfg.pulso ? 1 + Math.sin(t * cfg.pulso) * 0.06 : 1;
+    const radio = base * latido;
+
+    // Halo detrás del cúmulo.
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, radio * 2.2);
+    g.addColorStop(0, `rgba(224, 16, 42, ${0.30 * cfg.brillo})`);
+    g.addColorStop(0.45, `rgba(224, 16, 42, ${0.08 * cfg.brillo})`);
+    g.addColorStop(1, "rgba(224, 16, 42, 0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, ancho, alto);
+
+    const giro = t * cfg.giro * Math.PI * 2;
+    nucleo.forEach((p) => {
+      const ang = p.ang + giro;
+      const vib = cfg.amplitud ? Math.sin(t * 3 + p.fase) * cfg.amplitud : 0;
+      const r = p.rad * radio + vib;
+      const x = cx + Math.cos(ang) * r;
+      const y = cy + Math.sin(ang) * r * p.achat;
+      // El centro tira a blanco, el borde al rojo del sistema.
+      const centro = 1 - p.rad;
+      const alfa = Math.min(1, p.brillo * cfg.brillo * (0.35 + centro * 0.65));
+      ctx.fillStyle = centro > 0.72
+        ? `rgba(255, 235, 235, ${alfa})`
+        : `rgba(224, 16, 42, ${alfa})`;
+      ctx.fillRect(x, y, 1.2, 1.2);
+    });
+  }
+
+  // Dibuja UN frame, sin agendar nada. Separado del bucle a propósito: hay
+  // que poder pintar el panel sin depender de requestAnimationFrame, que no
+  // corre si la ventana está oculta o minimizada (si no, el panel se queda
+  // negro hasta que alguien la muestre).
+  function dibujarFrame() {
+    const t = (performance.now() - t0) / 1000;
+    ctx.clearRect(0, 0, ancho, alto);
+    if (fondo) ctx.drawImage(fondo, 0, 0, ancho, alto);
+    dibujarNucleo(t);
+  }
+
+  function bucle() {
+    dibujarFrame();
+    const cfg = NUCLEO_POR_ESTADO[estadoActual] || NUCLEO_POR_ESTADO.inactivo;
+    if (cfg.amplitud || cfg.pulso || cfg.giro) {
+      requestAnimationFrame(bucle);
+    } else {
+      // Reposo: se corta el bucle. Nada se mueve hasta el próximo cambio de
+      // estado, y la app no gasta CPU dibujando lo mismo 60 veces por segundo.
+      animando = false;
+    }
+  }
+
+  function arrancarBucle() {
+    if (animando) return;
+    animando = true;
+    requestAnimationFrame(bucle);
+  }
+
+  function redimensionar() {
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    dpr = window.devicePixelRatio || 1;
+    ancho = rect.width;
+    alto = rect.height;
+    canvas.width = Math.round(ancho * dpr);
+    canvas.height = Math.round(alto * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    dibujarFondo();
+    dibujarFrame();  // síncrono: el panel nunca se ve negro
+    arrancarBucle(); // y si hay estado activo, sigue el movimiento
+  }
+
+  new ResizeObserver(redimensionar).observe(canvas);
+  redimensionar();
+
+  // Al cambiar de estado se pinta un frame ya (para que se vea el cambio
+  // aunque rAF no corra) y se reanuda el bucle si el estado nuevo se mueve.
+  return {
+    cambiarEstado() {
+      dibujarFrame();
+      arrancarBucle();
+    },
+  };
+}
+
+espacio = iniciarEspacio();
 pollEstado();
 setInterval(pollEstado, 500);

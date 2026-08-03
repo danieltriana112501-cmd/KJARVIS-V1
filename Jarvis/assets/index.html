@@ -4,64 +4,101 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>JARVIS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
-<body class="halftone-bg">
-<div class="scanlines"></div>
+<body>
+<div class="starfield"></div>
+<div class="crt-overlay"></div>
 
 <div class="app">
   <aside class="sidebar">
-    <button class="sidebar-icono" id="btnTareas" title="Tareas">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square">
-        <path d="M9 11l3 3L22 4"/>
-        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+    <div class="sidebar-marca">
+      <span class="sidebar-inicial">J</span>
+      <span class="sidebar-version">v1.0</span>
+    </div>
+    <div class="sidebar-iconos">
+      <button class="sidebar-icono" id="btnTareas" title="Tareas">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="square">
+          <path d="M9 11l3 3L22 4"/>
+          <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+        </svg>
+      </button>
+      <button class="sidebar-icono" id="btnRecordatorios" title="Recordatorios">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="square">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+        </svg>
+      </button>
+      <button class="sidebar-icono" id="btnConfig" title="Configuración">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="square">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+    </div>
+    <div class="sidebar-pie" title="Sesión local">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="square">
+        <circle cx="12" cy="12" r="9"/>
+        <circle cx="12" cy="10" r="3"/>
+        <path d="M6.5 19a6 6 0 0 1 11 0"/>
       </svg>
-      <span>TAREAS</span>
-    </button>
-    <button class="sidebar-icono" id="btnRecordatorios" title="Recordatorios">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square">
-        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
-        <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
-      </svg>
-      <span>RECORDATORIOS</span>
-    </button>
-    <button class="sidebar-icono" id="btnConfig" title="Configuración">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square">
-        <circle cx="12" cy="12" r="3"/>
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-      </svg>
-      <span>CONFIG</span>
-    </button>
+    </div>
   </aside>
 
   <main class="main">
     <header class="header">
-      <h1 class="logo">JARVIS</h1>
+      <div class="header-marca">
+        <h1 class="logo">JARVIS</h1>
+        <div class="header-barras"><i></i><i></i><i></i></div>
+      </div>
       <div class="header-acciones">
-        <button class="btn-voz" id="btnPip">
-          <span id="btnPipTexto">MOSTRAR MINI</span>
-        </button>
         <button class="btn-voz" id="btnVoz">
           <span id="btnVozTexto">ACTIVAR VOZ</span>
+        </button>
+        <button class="btn-voz btn-plano" id="btnPip">
+          <span id="btnPipTexto">MOSTRAR JARVIS</span>
         </button>
       </div>
     </header>
 
     <section class="panel-central">
-      <div class="panel-ascii inactivo" id="panelAscii">
-        <span class="ascii-estado-tag" id="estadoTexto">INACTIVO</span>
-        <div class="ascii-scale-wrap" id="asciiScaleWrap">
-          <pre class="ascii-pre" id="asciiPre"></pre>
+      <div class="panel-hero corner-accent inactivo" id="panelHero">
+        <div class="corner-bottom"></div>
+        <canvas class="panel-espacio" id="canvasEspacio"></canvas>
+        <span class="hero-estado-tag">
+          <span class="hero-estado-dot"></span><span id="estadoTexto">INACTIVO</span>
+        </span>
+        <div class="panel-hero-texto">
+          <h2 class="hero-titulo">NEURAL ECHO</h2>
+          <div class="hero-regla"></div>
+          <p class="hero-desc" id="caption">Enlace neural en espera. Sin actividad en el sector local.</p>
         </div>
       </div>
-      <div class="caption" id="caption"></div>
 
-      <div class="chat-log" id="chatLog"></div>
+      <div class="caption">EL UNIVERSO ESTÁ HABLANDO...</div>
 
-      <form class="chat-form" id="chatForm">
-        <input type="text" id="chatInput" placeholder="Escribile a Jarvis..." autocomplete="off">
-        <button type="submit">ENVIAR</button>
-      </form>
+      <div class="consola corner-accent">
+        <div class="corner-bottom"></div>
+        <div class="consola-barra">
+          <span>CONSOLE_LOG::SYS_MONITOR</span>
+          <span class="puntos"><i></i><i></i></span>
+        </div>
+        <div class="chat-log" id="chatLog"></div>
+        <form class="chat-form" id="chatForm">
+          <input type="text" id="chatInput" placeholder="Escribí un comando o consulta..." autocomplete="off">
+          <button type="submit">Enviar</button>
+        </form>
+      </div>
+
+      <footer class="telemetria">
+        <span>ENLACE SEGURO: 127.0.0.1 // CANAL: RED_PRIME</span>
+        <span class="grupo">
+          <span>LATENCIA: LOCAL</span>
+          <span class="ok">CIFRADO</span>
+        </span>
+      </footer>
     </section>
   </main>
 </div>
@@ -200,7 +237,7 @@
 
       <label class="campo-checkbox">
         <input type="checkbox" id="cfgUltratumba">
-        VOZ DE ULTRATUMBA (EXPERIMENTAL)
+        VOZ GRAVE / DISTORSIONADA (EXPERIMENTAL)
       </label>
 
       <label>PROBAR MICRÓFONO</label>

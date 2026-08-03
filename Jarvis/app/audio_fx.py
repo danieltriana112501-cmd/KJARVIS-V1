@@ -1,38 +1,30 @@
-"""audio_fx.py — Filtro cavernoso opcional sobre el audio de salida de voz.
+"""audio_fx.py — Cadena de efectos "voz de Venom" sobre el audio de salida.
 
-Pitch-shift real (bajar el tono) no es seguro acá: la Live API entrega el
-audio en chunks chicos en tiempo real, y cualquier técnica de pitch-shift
-que preserve la duración (phase vocoder, PSOLA) necesita ventanas de
-contexto que no calzan con un stream chunk-a-chunk sin introducir latencia
-creciente o cortes — justo el tipo de problema de audio que ya costó horas
-de debugging en este proyecto (ver plans/ERRORES.md). Un pitch-shift
-"barato" por resampleo cambiaría la duración del audio, y la cola de
-reproducción (`voice_engine._reproducir_loop`) se iría desincronizando del
-tiempo real.
+Dos piezas, en orden:
 
-Lo que sí es seguro en un stream chunk-a-chunk, porque ninguno necesita
-ventana de contexto más allá de una muestra (o un contador de fase
-continuo, que es igual de barato):
+1. `_PitchDownRealtime` — pitch-down REAL vía Rubber Band en modo
+   `PROCESS_REALTIME` (`pylibrb`, bindings directos — no `pedalboard`, que
+   solo expone el motor offline de Rubber Band). Medido en
+   `plans/INVESTIGACION-2026-07-30-voz-venom.md`: `pedalboard.PitchShift`
+   bufferea ~1s antes de devolver audio y el atraso crece sin techo
+   (inutilizable acá); `pylibrb` en modo realtime da ~40ms de latencia FIJA
+   (no crece), confirmado sobre 30s simulados. Con `FORMANT_PRESERVED` para
+   que grave no suene "voz de persona chica en tono grave".
+2. `FiltroUltratumba` — pasabajos + modulación en anillo + saturación
+   asimétrica (armónicos pares = growl) + eco, todo con estado de UNA
+   muestra de memoria (sin ventana de contexto, sin latencia extra). Igual
+   que antes de esta investigación.
 
-- pasabajos de un polo — apaga agudos, da tono apagado/cavernoso.
-- modulación en anillo (portadora grave, ~30Hz) — mete el timbre metálico/
-  gutural.
-- saturación ASIMÉTRICA (`tanh` con drive distinto en el semiciclo positivo
-  y negativo) — a diferencia de un clip simétrico, esto mete armónicos
-  PARES, que es lo que da el "buzz"/gruñido (growl) de una voz tipo
-  Venom/monstruo en vez de una distorsión pareja de guitarra. Sigue siendo
-  no lineal pero por-muestra, sin memoria.
-- eco corto con feedback — resonancia de cueva.
-
-Todos con estado de UNA muestra (o una fase) de memoria, así que el estado
-viaja de un chunk al siguiente sin clicks. Un pitch-down real (más grave de
-verdad, no solo más distorsionado) sigue sin ser seguro acá por el motivo
-de arriba — esto se acerca al carácter (gutural, sucio, cavernoso) sin
-tocar la duración del audio.
+`FiltroVenom` compone ambas más una CAPA SECUNDARIA (segunda voz, pitch más
+grave todavía, mezclada baja con un chunk de retraso) — la referencia real
+de cómo Sony hizo la voz de Venom no es un filtro solo, es layering: la voz
+de Tom Hardy mezclada con una segunda voz separada (ver la investigación).
+Sin la capa secundaria, esto es solo "Jarvis con voz grave", no Venom.
 """
 from __future__ import annotations
 
 import numpy as np
+import pylibrb as _rb
 
 
 class FiltroUltratumba:
@@ -96,3 +88,119 @@ class FiltroUltratumba:
 
         np.clip(salida, -32768, 32767, out=salida)
         return salida.astype(np.int16).tobytes()
+
+
+class _PitchDownRealtime:
+    """Pitch-down real vía Rubber Band en modo tiempo real. Ver
+    `plans/INVESTIGACION-2026-07-30-voz-venom.md`: `PROCESS_REALTIME` +
+    `ENGINE_FASTER` da ~40ms de latencia FIJA (medido, no crece en 30s
+    simulados) — el motor offline que usa `pedalboard` en cambio acumula
+    ~1s de atraso sin techo, inutilizable en un stream en vivo."""
+
+    def __init__(self, sample_rate: int, semitonos: float):
+        opciones = (
+            _rb.Option.PROCESS_REALTIME
+            | _rb.Option.ENGINE_FASTER
+            | _rb.Option.FORMANT_PRESERVED
+            | _rb.Option.WINDOW_SHORT
+        )
+        escala = 2.0 ** (semitonos / 12.0)
+        self._stretcher = _rb.RubberBandStretcher(
+            sample_rate, 1, opciones, initial_pitch_scale=escala,
+        )
+
+    def procesar_float(self, muestras_int16: np.ndarray) -> np.ndarray:
+        """`muestras_int16` es 1D int16 ya decodificado. Devuelve float32 1D
+        en [-1, 1] — el largo NO tiene por qué coincidir con el de entrada
+        (Rubber Band bufferea internamente, ver la latencia de arriba)."""
+        audio = (muestras_int16.astype(np.float32) / 32768.0).reshape(1, -1)
+        self._stretcher.process(audio, final=False)
+        salida = self._stretcher.retrieve_available()
+        return salida[0] if salida.size else np.empty(0, dtype=np.float32)
+
+
+class FiltroVenom:
+    """Cadena completa: pitch-down real (voz principal) + una segunda voz
+    más grave todavía mezclada baja con un chunk de retraso (imita el
+    layering real que usó Sony — ver la investigación, no es solo un
+    filtro) + `FiltroUltratumba` (growl/textura) encima de la mezcla."""
+
+    _SEMITONOS_PRINCIPAL = -6.0
+    _SEMITONOS_SECUNDARIA = -12.0
+    _MEZCLA_SECUNDARIA = 0.25
+
+    def __init__(self, sample_rate: int):
+        self._principal = _PitchDownRealtime(sample_rate, self._SEMITONOS_PRINCIPAL)
+        self._secundaria = _PitchDownRealtime(sample_rate, self._SEMITONOS_SECUNDARIA)
+        self._ultratumba = FiltroUltratumba(sample_rate)
+        # ponytail: retraso de la capa secundaria = "lo que sobró del chunk
+        # anterior" (no un ring buffer con retraso exacto en ms) — alcanza
+        # para el efecto "segunda voz encima" a oído. Si no se siente
+        # separada de la principal, subir a un buffer circular con retraso
+        # configurable en milisegundos.
+        self._secundaria_previa = np.empty(0, dtype=np.float32)
+
+    def procesar(self, datos: bytes) -> bytes:
+        muestras = np.frombuffer(datos, dtype=np.int16)
+        if muestras.size == 0:
+            return datos
+
+        principal = self._principal.procesar_float(muestras)
+        secundaria = self._secundaria.procesar_float(muestras)
+
+        if principal.size and self._secundaria_previa.size:
+            n = min(principal.size, self._secundaria_previa.size)
+            principal[:n] += self._secundaria_previa[:n] * self._MEZCLA_SECUNDARIA
+        self._secundaria_previa = secundaria
+
+        if principal.size == 0:
+            # Los primeros chunks pueden no devolver nada todavía mientras
+            # Rubber Band llena su buffer interno (~40ms) — no es un error,
+            # el audio llega en el chunk siguiente.
+            return b""
+
+        pcm16 = np.clip(principal * 32768.0, -32768, 32767).astype(np.int16)
+        return self._ultratumba.procesar(pcm16.tobytes())
+
+
+def _check() -> None:
+    """Self-check sin audio real: genera un tono puro de 200Hz, lo pasa por
+    `FiltroVenom` y confirma con FFT que la frecuencia dominante de salida
+    bajó de verdad (no solo que el filtro no explota) — la parte que un
+    self-check sin oído SÍ puede verificar objetivamente."""
+    sr = 24000
+    f0 = 200.0
+    chunk_ms = 200
+    chunk_n = int(sr * chunk_ms / 1000)
+    n_chunks = 20  # 4s — suficiente para que el pitch-shifter se estabilice
+
+    venom = FiltroVenom(sr)
+    idx_global = 0
+    ultimos_chunks = []
+    for i in range(n_chunks):
+        t = (idx_global + np.arange(chunk_n)) / sr
+        tono = (np.sin(2.0 * np.pi * f0 * t) * 20000).astype(np.int16)
+        idx_global += chunk_n
+        salida = venom.procesar(tono.tobytes())
+        if i >= n_chunks - 5:  # solo los últimos chunks, ya estabilizado
+            ultimos_chunks.append(np.frombuffer(salida, dtype=np.int16))
+
+    salida_estable = np.concatenate([c for c in ultimos_chunks if c.size])
+    assert salida_estable.size > sr // 4, "muy poca salida estable para analizar"
+
+    espectro = np.abs(np.fft.rfft(salida_estable.astype(np.float64)))
+    freqs = np.fft.rfftfreq(salida_estable.size, d=1.0 / sr)
+    f_dominante = freqs[np.argmax(espectro)]
+
+    f_esperada = f0 * (2.0 ** (FiltroVenom._SEMITONOS_PRINCIPAL / 12.0))
+    assert abs(f_dominante - f_esperada) < 15.0, (
+        f"pitch-down no bajo como se esperaba: entrada={f0}Hz, "
+        f"esperado~{f_esperada:.1f}Hz, medido={f_dominante:.1f}Hz"
+    )
+    assert f_dominante < f0 * 0.9, "la frecuencia de salida deberia ser claramente mas grave"
+
+    print(f"OK (tono {f0:.0f}Hz -> {f_dominante:.1f}Hz, esperado~{f_esperada:.1f}Hz)")
+
+
+if __name__ == "__main__":
+    _check()

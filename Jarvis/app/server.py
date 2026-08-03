@@ -46,9 +46,6 @@ _voz_cache = {"api_key": None, "voice": None, "motor": None}
 # Fase 09: flag simple para que /api/estado reporte "procesando" mientras
 # /api/mensaje espera a GeminiAgent. Un solo usuario local, no hace falta lock.
 _estado_texto = {"procesando": False}
-# Fase 10: referencia a la ventana mini (PIP), inyectada por ui.py después de
-# crearla — server.py no depende de pywebview para nada más que esto.
-_pip = {"window": None}
 # Fase 13: estado del test de micrófono (nivel en vivo, sin sesión de voz).
 # Lock propio porque el callback de PortAudio corre en su propio hilo nativo,
 # aparte de los hilos de Flask que atienden iniciar/detener/nivel.
@@ -78,10 +75,6 @@ def _normalizar_nivel(rms: float) -> float:
         return 0.0
     dbfs = 20.0 * math.log10(min(rms, _PCM16_FULL_SCALE) / _PCM16_FULL_SCALE)
     return max(0.0, min(100.0, (dbfs - _DBFS_PISO) / -_DBFS_PISO * 100.0))
-
-
-def set_pip_window(window) -> None:
-    _pip["window"] = window
 
 
 def _get_agente() -> GeminiAgent | None:
@@ -403,9 +396,6 @@ def get_pip_estado():
 def post_pip_toggle():
     nuevo = not config.get("pip_habilitado", False)
     config.set("pip_habilitado", nuevo)
-    ventana = _pip["window"]
-    if ventana is not None:
-        ventana.show() if nuevo else ventana.hide()
     return jsonify({"habilitado": nuevo})
 
 

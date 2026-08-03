@@ -329,8 +329,12 @@ class VoiceEngine:
         # Leído una sola vez al conectar, mismo patrón que mic/speaker arriba:
         # cambiar el checkbox en caliente requiere reiniciar la sesión de voz.
         usar_auriculares = bool(config.get("usar_auriculares", False))
+        # `FiltroVenom` = pitch-down real + capa secundaria + FiltroUltratumba
+        # (ver plans/INVESTIGACION-2026-07-30-voz-venom.md). Mismo checkbox
+        # que antes (`voz_ultratumba`) — sigue siendo "el filtro experimental
+        # de voz", ahora con pitch grave real en vez de solo distorsión.
         efecto_ultratumba = (
-            audio_fx.FiltroUltratumba(_SAMPLE_RATE_OUT)
+            audio_fx.FiltroVenom(_SAMPLE_RATE_OUT)
             if config.get("voz_ultratumba", False) else None
         )
 

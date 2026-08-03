@@ -108,3 +108,5 @@ actualizarse a sí misma si aplica):
 - [x] Fase 16
 - [x] Fase 17
 - [x] Fase 18
+- [x] Fase 19 — overlay flotante (`app/overlay.py`, `app/plexus.py`); implementada sin archivo de fase propio
+- [x] Fase 20 — [una figura por estado](phase-20-figuras-por-estado.md) + atajo Ctrl+Espacio para iniciar/detener voz
